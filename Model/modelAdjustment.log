@@ -1,0 +1,7 @@
+-For pose #0, scaled gmax1 moment arm was -0.006. Unscaled was -0.005. Reduced R&L wrap radius from 0.048 to 0.036, which increased the moment arm back to -0.011.
+-For pose #0, moved iliacus pelvis path point xpos forward from -0.016 to -0.008, and femur iliacus path point ypos down from -0.057 to -0.065. Restored moment arm from 0.008 to 0.038.
+-For pose #1, moved iliacus pelvis path point xpos forward from -0.016 to -0.000, and femur iliacus path point ypos down from -0.057 to -0.073. Restored moment arm from 0.007 to 0.028.
+-For pose #2, moved iliacus pelvis path point xpos forward from -0.016 to -0.000, and femur iliacus path point ypos down from -0.057 to -0.073, and after moving points by 1.5±0.2cm wasnt enough, reduced R&L iliacus wrap radius from 0.066 to 0.064. Restored moment arm from 0.014 to 0.050.
+-For pose #0, moved psoas pelvis path point xpos forward from -0.025 to -0.023, and femur psoas path point ypos down from -0.047 to -0.049. Restored moment arm from 0.008 to 0.029.
+-For pose #1, moved psoas pelvis path point xpos forward from -0.025 to -0.011, and femur psoas path point ypos down from -0.047 to -0.061. Restored moment arm from 0.003 to 0.018.
+-For pose #2, moved psoas pelvis path point xpos forward from -0.025 to -0.009, and femur psoas path point ypos down from -0.047 to -0.063. Restored moment arm from 0.009 to 0.039.

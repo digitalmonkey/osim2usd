@@ -54,7 +54,7 @@ def writeUsd(parseTree, usdPath, geomPath):
         for bodyset in model.findall("./BodySet"):
             print("Bodyset: ", bodyset.attrib["name"])
             skeletonPath = skelRootPath + "/" + bodyset.attrib["name"]
-            skeletonPrim = UsdSkel.Skeleton.Define(stage, skeletonPath)
+            skeleton: UsdSkel = UsdSkel.Skeleton.Define(stage, skeletonPath)
 
             for body in bodyset.findall("./objects/Body"):
                 print("\tBody: ", body.attrib["name"])
@@ -63,24 +63,24 @@ def writeUsd(parseTree, usdPath, geomPath):
                 for mesh in body.findall("./attached_geometry/Mesh"):
                     print("\t\tMesh: ", mesh.attrib["name"])
                     meshPath = skelRootPath + "/" + mesh.attrib["name"]
-                    meshRef = UsdGeom.Mesh.Define(stage, meshPath)
+                    meshGeom = UsdGeom.Mesh.Define(stage, meshPath)
                     meshPrim = stage.GetPrimAtPath(meshPath)
 
                     for scaleFactor in mesh.findall("./scale_factors"):
                         scaleFactors = [float(x) for x in scaleFactor.text.split()]
-                        meshScaleOp = meshRef.AddScaleOp()
+                        meshScaleOp = meshGeom.AddScaleOp()
                         meshScaleOp.Set(Gf.Vec3f(scaleFactors))
                         break
 
                     for color in mesh.findall("./Appearance/color"):
                         colors = [float(x) for x in color.text.split()]
-                        colorAttr = meshRef.GetDisplayColorAttr()
+                        colorAttr = meshGeom.GetDisplayColorAttr()
                         colorAttr.Set([tuple(colors)])
                         break
 
                     for opacity in mesh.findall("./Appearance/opacity"):
                         opacityValue = float(opacity.text)
-                        opacityAttr = meshRef.GetDisplayOpacityAttr()
+                        opacityAttr = meshGeom.GetDisplayOpacityAttr()
                         opacityAttr.Set([opacityValue])
                         break
 
@@ -105,12 +105,52 @@ def writeUsd(parseTree, usdPath, geomPath):
                 print("\t\t WrappedObject[", wrappedObject.tag, "] = ", wrappedObject.attrib["name"])
 
         # Parse joints
+        jointNames = Vt.TokenArray([joint.attrib["name"] for joint in model.findall("./JointSet/objects/*")])
+        skeleton.GetJointNamesAttr().Set(jointNames)
+
+        jointFramesDict = dict()
+        jointOffsetsFramesDict = dict()
+        jointParents = dict()
+        joints=[]
         for joint in model.findall("./JointSet/objects/*"):
             print("\tJoint Type:", joint.tag, "[", joint.attrib["name"], "]")
+            parentFrame = joint.find("./socket_parent_frame").text
+            childFrame = joint.find("./socket_child_frame").text
+            jointFramesDict[joint.attrib["name"]] = (parentFrame, childFrame)
+            for offsetFrame in joint.findall("./frames/PhysicalOffsetFrame"):
+                offset = offsetFrame.attrib["name"]
+                parent = offsetFrame.find("./socket_parent").text
+                jointOffsetsFramesDict[offset] = parent
+            parentBody = os.path.basename(jointOffsetsFramesDict[jointFramesDict[joint.attrib["name"]][0]])
+            childBody = os.path.basename(jointOffsetsFramesDict[jointFramesDict[joint.attrib["name"]][1]])
+            jointParents[childBody] = parentBody
+            # Build topology path names
+
+            jointPath = childBody
+            while(parentBody != "ground"):
+                jointPath = parentBody + "/" + jointPath
+                parentBody = jointParents[parentBody]
+            joints.append(jointPath)
+
+        jointPaths = Vt.TokenArray(joints)
+        skeleton.GetJointsAttr().Set(jointPaths)
+
+        # print("\t ", jointFramesDict)
+        # print("\t ", jointOffsetsFramesDict)
+        # print("\t ", jointPaths)
 
         # Parse forces (like muscles)
-        for force in model.findall(".ForceSet/objects/*"):
+        for force in model.findall("./ForceSet/objects/*"):
             print("\tForce Type:", force.tag, "[", force.attrib["name"],"]")
+
+        # Parse marker set
+        for markerset in model.findall("./MarkerSet"):
+            print("\tMarker set:", markerset.attrib["name"])
+            for marker in markerset.findall("./objects/Marker"):
+                parentFrame = marker.find("./socket_parent_frame")
+                location = marker.find("./location")
+                localCoords = [float(x) for x in location.text.split()]
+                print("\t\tMarker ", marker.attrib["name"], ": ", parentFrame.text, localCoords)
 
         stage.GetRootLayer().Save()
         stage.Export(usdPath + "a") # Save a usda file as well
@@ -183,8 +223,8 @@ def main(argv):
 
     print(f"OpenSim version: {osim.GetVersionAndDate()}")
 
-    sessionPath="/Users/digitalmonkey/Documents/ProjectMuscle/a5123613-1ed0-4559-a697-6755f48b194b/"
-    modelPath = "OpenSimData/Model/LaiArnoldModified2017_poly_withArms_weldHand_scaled_adjusted.osim"
+    sessionPath=""
+    modelPath = "./Model/LaiArnoldModified2017_poly_withArms_weldHand_scaled_adjusted.osim"
     inputPath = sessionPath + modelPath
     outputPath = os.path.splitext(inputPath)[0] + ".usd"
 
