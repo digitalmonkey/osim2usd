@@ -1,5 +1,5 @@
 # Library imports
-import os, sys, getopt
+import math, os, sys, getopt
 
 # For XML parsing
 import xml.etree.ElementTree as xmlTree
@@ -51,6 +51,7 @@ def writeUsd(parseTree, usdPath, geomPath):
         modelPrim = UsdSkel.Root.Define(stage, skelRootPath)
         stage.SetDefaultPrim(stage.GetPrimAtPath(skelRootPath))
 
+        meshBodyDict = dict()
         for bodyset in model.findall("./BodySet"):
             print("Bodyset: ", bodyset.attrib["name"])
             skeletonPath = skelRootPath + "/" + bodyset.attrib["name"]
@@ -62,47 +63,47 @@ def writeUsd(parseTree, usdPath, geomPath):
 
                 for mesh in body.findall("./attached_geometry/Mesh"):
                     print("\t\tMesh: ", mesh.attrib["name"])
+
                     meshPath = skelRootPath + "/" + mesh.attrib["name"]
                     meshGeom = UsdGeom.Mesh.Define(stage, meshPath)
                     meshPrim = stage.GetPrimAtPath(meshPath)
+                    meshBodyDict[meshGeom] = body.attrib["name"]
 
-                    for scaleFactor in mesh.findall("./scale_factors"):
-                        scaleFactors = [float(x) for x in scaleFactor.text.split()]
-                        meshScaleOp = meshGeom.AddScaleOp()
-                        meshScaleOp.Set(Gf.Vec3f(scaleFactors))
-                        break
+                    scaleFactor = mesh.find("./scale_factors")
+                    scaleFactors = [float(x) for x in scaleFactor.text.split()]
+                    meshScaleOp = meshGeom.AddScaleOp()
+                    meshScaleOp.Set(Gf.Vec3f(scaleFactors))
 
-                    for color in mesh.findall("./Appearance/color"):
-                        colors = [float(x) for x in color.text.split()]
-                        colorAttr = meshGeom.GetDisplayColorAttr()
-                        colorAttr.Set([tuple(colors)])
-                        break
+                    color = mesh.find("./Appearance/color")
+                    # for color in mesh.findall("./Appearance/color"):
+                    colors = [float(x) for x in color.text.split()]
+                    colorAttr = meshGeom.GetDisplayColorAttr()
+                    colorAttr.Set([tuple(colors)])
 
-                    for opacity in mesh.findall("./Appearance/opacity"):
-                        opacityValue = float(opacity.text)
-                        opacityAttr = meshGeom.GetDisplayOpacityAttr()
-                        opacityAttr.Set([opacityValue])
-                        break
+                    opacity = mesh.find("./Appearance/opacity")
+                    opacityValue = float(opacity.text)
+                    opacityAttr = meshGeom.GetDisplayOpacityAttr()
+                    opacityAttr.Set([opacityValue])
 
-                    for meshFile in mesh.findall("./mesh_file"):
-                        print("\t\t\tMeshFile: ", meshFile.text)
+                    meshFile = mesh.find("./mesh_file")
+                    print("\t\t\tMeshFile: ", meshFile.text)
 
-                        meshPath = geomPath + "/" + meshFile.text
-                        ( faceVertexCounts, faceVertexIndices, points ) = getMeshArrays(meshPath)
+                    meshPath = geomPath + "/" + meshFile.text
+                    ( faceVertexCounts, faceVertexIndices, points ) = getMeshArrays(meshPath)
 
-                        faceVertexCountsAttr = meshPrim.CreateAttribute('faceVertexCounts', Sdf.ValueTypeNames.IntArray)
-                        faceVertexCountsAttr.Set(Vt.IntArray(faceVertexCounts))
+                    faceVertexCountsAttr = meshPrim.CreateAttribute('faceVertexCounts', Sdf.ValueTypeNames.IntArray)
+                    faceVertexCountsAttr.Set(Vt.IntArray(faceVertexCounts))
 
-                        faceVertexIndicesAttr = meshPrim.CreateAttribute('faceVertexIndices', Sdf.ValueTypeNames.IntArray)
-                        faceVertexIndicesAttr.Set(Vt.IntArray(faceVertexIndices))
+                    faceVertexIndicesAttr = meshPrim.CreateAttribute('faceVertexIndices', Sdf.ValueTypeNames.IntArray)
+                    faceVertexIndicesAttr.Set(Vt.IntArray(faceVertexIndices))
 
-                        pointsAttr = meshPrim.CreateAttribute('points', Sdf.ValueTypeNames.Float3Array)
-                        pointsAttr.Set(Vt.Vec3fArray.FromNumpy(points))
-
-                        break
+                    pointsAttr = meshPrim.CreateAttribute('points', Sdf.ValueTypeNames.Float3Array)
+                    pointsAttr.Set(Vt.Vec3fArray.FromNumpy(points))
 
             for wrappedObject in body.findall("./WrapObjectSet/objects/*"):
                 print("\t\t WrappedObject[", wrappedObject.tag, "] = ", wrappedObject.attrib["name"])
+
+        print("meshBodyDict: ", meshBodyDict)
 
         # Parse joints
         jointNames = Vt.TokenArray([joint.attrib["name"] for joint in model.findall("./JointSet/objects/*")])
@@ -112,6 +113,9 @@ def writeUsd(parseTree, usdPath, geomPath):
         jointOffsetsFramesDict = dict()
         jointParents = dict()
         joints=[]
+        bindTransformsDict = dict()
+        bindTransforms=[] # World space transform of each joint
+        restTransforms=[] # Local space rest transforms of each joint, fallback for joints with no animation.
         for joint in model.findall("./JointSet/objects/*"):
             print("\tJoint Type:", joint.tag, "[", joint.attrib["name"], "]")
             parentFrame = joint.find("./socket_parent_frame").text
@@ -120,12 +124,30 @@ def writeUsd(parseTree, usdPath, geomPath):
             for offsetFrame in joint.findall("./frames/PhysicalOffsetFrame"):
                 offset = offsetFrame.attrib["name"]
                 parent = offsetFrame.find("./socket_parent").text
-                jointOffsetsFramesDict[offset] = parent
-            parentBody = os.path.basename(jointOffsetsFramesDict[jointFramesDict[joint.attrib["name"]][0]])
-            childBody = os.path.basename(jointOffsetsFramesDict[jointFramesDict[joint.attrib["name"]][1]])
-            jointParents[childBody] = parentBody
-            # Build topology path names
+                translation = Gf.Vec3d([float(x) for x in offsetFrame.find("./translation").text.split()])
+                rotationsXYZ = [float(e) for e in offsetFrame.find("./orientation").text.split()]
+                xRotation = Gf.Rotation(Gf.Vec3d([1.0, 0.0, 0.0]), math.degrees(rotationsXYZ[0]))
+                yRotation = Gf.Rotation(Gf.Vec3d([0.0, 1.0, 0.0]), math.degrees(rotationsXYZ[1]))
+                zRotation = Gf.Rotation(Gf.Vec3d([0.0, 0.0, 1.0]), math.degrees(rotationsXYZ[2]))
+                orientation = xRotation * yRotation * zRotation
+                print("\t\ttranslation: ", translation, "orientation: ", orientation)
 
+                jointOffsetsFramesDict[offset] = (parent, translation, orientation)
+
+            parentBody = os.path.basename(jointOffsetsFramesDict[jointFramesDict[joint.attrib["name"]][0]][0])
+            childBody = os.path.basename(jointOffsetsFramesDict[jointFramesDict[joint.attrib["name"]][1]][0])
+            jointParents[childBody] = parentBody
+
+            parentSkelSpaceTransform = Gf.Matrix4d(1.0) # identity matrix
+            if parentBody != "ground":
+                parentSkelSpaceTransform = bindTransformsDict[parentBody]
+            (parent, translation, orientation) = jointOffsetsFramesDict[parentFrame]
+            parentJointSkelSpaceTransform = Gf.Matrix4d(orientation, translation)
+            bindTransform = parentJointSkelSpaceTransform * parentSkelSpaceTransform
+            bindTransforms.append(bindTransform)
+            bindTransformsDict[childBody] = bindTransform
+
+            # Add joint to joint hierarchy
             jointPath = childBody
             while(parentBody != "ground"):
                 jointPath = parentBody + "/" + jointPath
@@ -135,9 +157,28 @@ def writeUsd(parseTree, usdPath, geomPath):
         jointPaths = Vt.TokenArray(joints)
         skeleton.GetJointsAttr().Set(jointPaths)
 
-        # print("\t ", jointFramesDict)
-        # print("\t ", jointOffsetsFramesDict)
-        # print("\t ", jointPaths)
+        bindTransformsArray = Vt.Matrix4dArray(bindTransforms)
+        skeleton.GetBindTransformsAttr().Set(bindTransformsArray)
+
+        for meshGeom in meshBodyDict:
+            body = meshBodyDict[meshGeom]
+            transformOp = meshGeom.AddTransformOp()
+            transformOp.Set(bindTransformsDict[body])
+
+
+        print("Joint Frame Dict: ", jointFramesDict)
+        print("PhysicalOffsetFrame: ", jointOffsetsFramesDict)
+        print("BindTransformsDict: ", bindTransformsDict)
+
+        # Find mesh transforms from joint transform data.
+
+
+
+        # TODO: Physical properties for simulation
+        # Mass, center of mass and inertia tensor data per body
+
+        # TODO: New muscle schema
+        # TODO: New wrap object schema
 
         # Parse forces (like muscles)
         for force in model.findall("./ForceSet/objects/*"):
