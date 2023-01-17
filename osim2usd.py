@@ -190,6 +190,7 @@ def writeUsd(parseTree, usdPath, geomPath, markerSpheres):
         print("Model: ", model.attrib["name"])
         skelRootPath = "/" + model.attrib["name"]
         modelPrim = UsdSkel.Root.Define(stage, skelRootPath)
+
         stage.SetDefaultPrim(stage.GetPrimAtPath(skelRootPath))
         UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.y)
 
@@ -198,6 +199,7 @@ def writeUsd(parseTree, usdPath, geomPath, markerSpheres):
             print("Bodyset: ", bodyset.attrib["name"])
             skeletonPath = skelRootPath + "/" + bodyset.attrib["name"]
             skeleton = UsdSkel.Skeleton.Define(stage, skeletonPath)
+            UsdSkel.BindingAPI.Apply(skeleton.GetPrim())
 
             bodyIndex = 0
             bodyName2Index = dict()
