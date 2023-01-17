@@ -189,7 +189,8 @@ def writeUsd(parseTree, usdPath, geomPath, markerSpheres):
     for model in root.findall("./Model"):
         print("Model: ", model.attrib["name"])
         skelRootPath = "/" + model.attrib["name"]
-        modelPrim = UsdSkel.Root.Define(stage, skelRootPath)
+        skelRoot = UsdSkel.Root.Define(stage, skelRootPath)
+        UsdSkel.BindingAPI.Apply(skelRoot.GetPrim())
 
         stage.SetDefaultPrim(stage.GetPrimAtPath(skelRootPath))
         UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.y)
