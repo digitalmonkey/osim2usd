@@ -49,7 +49,6 @@ class SimmSpline(Function):
 
 class LinearFunction(Function):
     def __init__(self, name, a, b):
-        print("Linear function: ", name, a, b)
         Function.__init__(self, name)
         self.a = a
         self.b = b
@@ -198,10 +197,13 @@ def writeUsd(parseTree, usdPath, geomPath, markerSpheres):
         for bodyset in model.findall("./BodySet"):
             print("Bodyset: ", bodyset.attrib["name"])
             skeletonPath = skelRootPath + "/" + bodyset.attrib["name"]
-            skeleton: UsdSkel = UsdSkel.Skeleton.Define(stage, skeletonPath)
+            skeleton = UsdSkel.Skeleton.Define(stage, skeletonPath)
 
+            bodyIndex = 0
+            bodyName2Index = dict()
             for body in bodyset.findall("./objects/Body"):
                 print("\tBody: ", body.attrib["name"])
+                bodyName2Index[body.attrib["name"]] = bodyIndex
 
                 for mesh in body.findall("./attached_geometry/Mesh"):
                     print("\t\tMesh: ", mesh.attrib["name"])
@@ -209,6 +211,13 @@ def writeUsd(parseTree, usdPath, geomPath, markerSpheres):
                     meshPath = skelRootPath + "/meshes/" + mesh.attrib["name"]
                     meshGeom = UsdGeom.Mesh.Define(stage, meshPath)
                     meshPrim = stage.GetPrimAtPath(meshPath)
+
+                    # Sets up binding of this mesh to a joint.
+                    binding = UsdSkel.BindingAPI.Apply(meshPrim)
+                    jointIndicesPrimvar = binding.CreateJointIndicesPrimvar(True)
+                    jointWeightsPrimvar = binding.CreateJointWeightsPrimvar(True)
+                    binding.SetRigidJointInfluence(bodyIndex, 1.0)
+
                     meshBodyDict[meshGeom] = body.attrib["name"]
 
                     scaleFactor = mesh.find("./scale_factors")
@@ -228,7 +237,7 @@ def writeUsd(parseTree, usdPath, geomPath, markerSpheres):
                     opacityAttr.Set([opacityValue])
 
                     meshFile = mesh.find("./mesh_file")
-                    print("\t\t\tMeshFile: ", meshFile.text)
+                    # print("\t\t\tMeshFile: ", meshFile.text)
 
                     meshPath = geomPath + "/" + meshFile.text
                     ( faceVertexCounts, faceVertexIndices, points ) = getMeshArrays(meshPath)
@@ -241,11 +250,14 @@ def writeUsd(parseTree, usdPath, geomPath, markerSpheres):
 
                     pointsAttr = meshPrim.CreateAttribute('points', Sdf.ValueTypeNames.Float3Array)
                     pointsAttr.Set(Vt.Vec3fArray.FromNumpy(points))
+                bodyIndex = bodyIndex + 1
+                # End Body Loop
 
             for wrappedObject in body.findall("./WrapObjectSet/objects/*"):
                 print("\t\t WrappedObject[", wrappedObject.tag, "] = ", wrappedObject.attrib["name"])
 
-        print("meshBodyDict: ", meshBodyDict)
+        # print("meshBodyDict: ", meshBodyDict)
+        # print("bodyName2Index: ", bodyName2Index)
 
         # Parse joints
         jointNames = Vt.TokenArray([joint.attrib["name"] for joint in model.findall("./JointSet/objects/*")])
@@ -384,6 +396,13 @@ def writeUsd(parseTree, usdPath, geomPath, markerSpheres):
                 body = os.path.basename(parentFrame.text)
                 markerTransform = bindTransformsDict[body]
                 markerTransformOp.Set(markerTransform)
+
+                # Sets up binding of this mesh to a joint.
+                binding = UsdSkel.BindingAPI.Apply(markerGeom.GetPrim())
+                jointIndicesPrimvar = binding.CreateJointIndicesPrimvar(True)
+                jointWeightsPrimvar = binding.CreateJointWeightsPrimvar(True)
+                bodyIndex = bodyName2Index[body]
+                binding.SetRigidJointInfluence(bodyIndex, 1.0)
 
         stage.GetRootLayer().Save()
         stage.Export(usdPath + "a") # Save a usda file as well
