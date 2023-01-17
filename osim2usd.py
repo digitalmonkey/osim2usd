@@ -15,6 +15,148 @@ import numpy as np
 import vtk
 from vtk.util.numpy_support import vtk_to_numpy
 
+class Function:
+    def __init__(self, name):
+        self.name = name
+
+    def calcValue(self, x):
+        return x
+
+    def calcDerivative(self, x):
+        return 1.0
+
+class Constant(Function):
+    def __init__(self, name, constantValue):
+        self.constantValue = constantValue
+        Function.__init__(self, name)
+
+    def calcValue(self, x):
+        return self.constantValue
+
+    def calcDerivative(self, x):
+        return 0.0
+class SimmSpline(Function):
+    def __init__(self, name, timeList, valueList):
+        Function.__init__(self, name)
+        assert(len(timeList) == len(valueList))
+        self.simmSpline = osim.SimmSpline()
+        for i in range(len(timeList)):
+           self.simmSpline.addPoint(timeList[i], valueList[i])
+    def calcValue(self, x):
+        return self.simmSpline.calcValue(osim.Vector(1, x))
+    def calcDerivative(self, x):
+        return self.simmSpline.calcDerivative(x)
+
+class LinearFunction(Function):
+    def __init__(self, name, a, b):
+        print("Linear function: ", name, a, b)
+        Function.__init__(self, name)
+        self.a = a
+        self.b = b
+
+    def calcValue(self, x):
+        return self.a*x + self.b
+
+    def calcDerivative(self, x):
+        return self.a
+
+class PolynomialFunction(Function):
+
+    def __init__(self, name, coeffs):
+        Function.__init__(self, name)
+        self.coeffs = coeffs
+
+    def calcValue(self, x):
+        maxDegree = len(self.coeffs) - 1
+        degree = maxDegree
+        value = 0.0
+        for c in self.coeffs:
+            value += c * pow(x, degree)
+            degree = degree - 1
+        return value
+
+    def calcDerivative(self, x):
+        maxDegree = len(self.coeffs) - 1
+        degree = maxDegree
+        value = 0.0
+        for c in self.coeffs:
+            if degree > 0:
+                value += c * degree * pow(x, degree-1)
+        return value
+class MultiplierFunction(Function):
+
+    def __init__(self, name, multiplier, function):
+        Function.__init__(self, name)
+        self.multiplier = multiplier
+        self.function = function
+    def calcValue(self, x):
+        return self.multiplier * self.function.calcValue(x)
+
+    def calcDerivative(self, x):
+        return self.multiplier * self.function.calcDerivative(x)
+
+class SpatialTransform:
+
+    def __init__(self, joint):
+        self.transformAxisDictionary = dict()
+        print("Building spatial transform for joint: ", joint.attrib["name"])
+
+        for transformAxis in joint.findall("./SpatialTransform/TransformAxis"):
+            type = transformAxis.attrib["name"]
+            axis = Gf.Vec3d([float(x) for x in transformAxis.find("./axis").text.split()])
+
+            for functionType in ["./SimmSpline", "./Constant", "./LinearFunction", "./MultiplierFunction"]:
+                function = transformAxis.find(functionType)
+                if function == None:
+                    continue
+
+                axisFunction = self.createFunction(function)
+                break
+
+            self.addTransformAxis(type, axis, axisFunction)
+
+    def createFunction(self, functionElement):
+        if functionElement.tag == "SimmSpline":
+            xList = [float(x) for x in functionElement.find("./x").text.split()]
+            yList = [float(y) for y in functionElement.find("./y").text.split()]
+            axisFunction = SimmSpline(functionElement.attrib["name"], xList, yList)
+        elif functionElement.tag == "Constant":
+            value = float(functionElement.find("./value").text)
+            axisFunction = Constant(functionElement.attrib["name"], value)
+        elif functionElement.tag == "LinearFunction":
+            coeffs = [float(x) for x in functionElement.find("./coefficients").text.split()]
+            axisFunction = LinearFunction(functionElement.attrib["name"], coeffs[0], coeffs[1])
+        elif functionElement.tag == "MultiplierFunction":
+            scale = float(functionElement.find("./scale").text)
+            multiplierFunctionElement = functionElement.find("./function/*")
+            multiplierFunction = self.createFunction(multiplierFunctionElement)
+            axisFunction = MultiplierFunction(functionElement.attrib["name"], scale, multiplierFunction)
+        elif functionElement.tag == "PolynomialFunction":
+            coeffs = [float(x) for x in functionElement.find("./coefficients").text.split()]
+            axisFunction = PolynomialFunction(functionElement.attrib["name"], coeffs)
+        else:
+            print("Error: Could not support function ", functionElement.tag)
+
+        return axisFunction
+
+    def addTransformAxis(self, type, axis, function):
+        self.transformAxisDictionary[type] = (axis, function)
+
+    def calcTransform(self, t):
+
+        translation = Gf.Vec3d(0, 0, 0)
+        orientation = Gf.Rotation()
+        orientation.SetIdentity()
+        for type in [ "translation1", "translation2", "translation3", "rotation1", "rotation2", "rotation3"]:
+            if type in self.transformAxisDictionary:
+                (axis, axisFunction) = self.transformAxisDictionary[type]
+                # print("Type: ", type, "Axis: ", axis, "axisFunction:", axisFunction)
+                if "translation" in type:
+                    translation += (axisFunction.calcValue(t) * axis)
+                if "rotation" in type: # Convert angles to degrees
+                    orientation *= Gf.Rotation(axis, math.degrees(axisFunction.calcValue(t)))
+        return (translation, orientation)
+
 def getMeshArrays(meshPath):
     reader = vtk.vtkXMLPolyDataReader()
     reader.SetFileName(meshPath)
@@ -39,35 +181,7 @@ def getMeshArrays(meshPath):
 
     return (faceVertexCounts, faceVertexIndices, points)
 
-def buildSpatialTransform(joint):
 
-    print("Building spatial transform for joint: ", joint.attrib["name"])
-
-    for transformAxis in joint.findall("./SpatialTransform/TransformAxis"):
-        print("TransformAxis: ", transformAxis.attrib["name"])
-        function = transformAxis.find("./SimmSpline")
-        if function != None:
-            print("Found SimmSpline: ", function.attrib["name"])
-
-        function = transformAxis.find("./Constant")
-        if function != None:
-            print("Found Constant: ", function.attrib["name"])
-
-        function = transformAxis.find("./LinearFunction")
-        if function != None:
-            print("Found Linear Function: ", function.attrib["name"])
-
-        function = transformAxis.find("./MultiplierFunction")
-        if function != None:
-            print("Found MultiplierFunction: ", function.attrib["name"])
-
-
-
-
-
-
-    spatialTransform = []
-    return spatialTransform
 
 def writeUsd(parseTree, usdPath, geomPath, markerSpheres):
     root = parseTree.getroot()
@@ -161,8 +275,14 @@ def writeUsd(parseTree, usdPath, geomPath, markerSpheres):
                 orientation = xRotation * yRotation * zRotation
                 jointOffsetsFramesDict[offset] = (parent, translation, orientation)
 
+            spatialTranslation = Gf.Vec3d(0, 0, 0)
+            spatialOrientation = Gf.Rotation().SetIdentity()
             if joint.tag == "CustomJoint":
-                spatialTransform = buildSpatialTransform(joint)
+                spatialTransform = SpatialTransform(joint)
+                (spatialTranslation, spatialOrientation) = spatialTransform.calcTransform(0.0)
+                # print("SpatialTransform = ", spatialTranslation, spatialOrientation)
+            # Compute custom joint offset, bake it into the bind transform
+            localSpatialTransform = Gf.Matrix4d(spatialOrientation, spatialTranslation)
 
             parentBody = os.path.basename(jointOffsetsFramesDict[jointFramesDict[joint.attrib["name"]][0]][0])
             childBody = os.path.basename(jointOffsetsFramesDict[jointFramesDict[joint.attrib["name"]][1]][0])
@@ -183,10 +303,10 @@ def writeUsd(parseTree, usdPath, geomPath, markerSpheres):
             (parent, translation, orientation) = jointOffsetsFramesDict[parentFrame]
             # Find inboard offset joint and use to adjust bone geometry reference frame.
             parentJointSkelSpaceTransform = Gf.Matrix4d(orientation, translation)
-            bindTransform = parentJointSkelSpaceTransform * invParentOffsetTransform * parentSkelSpaceTransform
+            bindTransform = localSpatialTransform * parentJointSkelSpaceTransform * invParentOffsetTransform * parentSkelSpaceTransform
             bindTransforms.append(bindTransform)
 
-            restTransform = parentJointSkelSpaceTransform * invParentOffsetTransform
+            restTransform = localSpatialTransform * parentJointSkelSpaceTransform * invParentOffsetTransform
             restTransforms.append(restTransform)
 
             bindTransformsDict[childBody] = bindTransform
