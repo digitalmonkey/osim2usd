@@ -190,17 +190,20 @@ def writeUsd(parseTree, usdPath, geomPath, markerSpheres):
         print("Model: ", model.attrib["name"])
         skelRootPath = "/" + model.attrib["name"]
         skelRoot = UsdSkel.Root.Define(stage, skelRootPath)
-        UsdSkel.BindingAPI.Apply(skelRoot.GetPrim())
 
         stage.SetDefaultPrim(stage.GetPrimAtPath(skelRootPath))
         UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.y)
 
+        # Add Skeleton
+        skeletonPath = skelRootPath + "/" + model.attrib["name"]
+        skeleton = UsdSkel.Skeleton.Define(stage, skeletonPath)
+        binding = UsdSkel.BindingAPI.Apply(skeleton.GetPrim())
+
         meshBodyDict = dict()
         for bodyset in model.findall("./BodySet"):
             print("Bodyset: ", bodyset.attrib["name"])
-            skeletonPath = skelRootPath + "/" + bodyset.attrib["name"]
-            skeleton = UsdSkel.Skeleton.Define(stage, skeletonPath)
-            UsdSkel.BindingAPI.Apply(skeleton.GetPrim())
+            bodysetPath = skelRootPath + "/" + bodyset.attrib["name"]
+            bodysetXform = UsdGeom.Xform.Define(stage, bodysetPath)
 
             bodyIndex = 0
             bodyName2Index = dict()
@@ -211,25 +214,15 @@ def writeUsd(parseTree, usdPath, geomPath, markerSpheres):
                 for mesh in body.findall("./attached_geometry/Mesh"):
                     print("\t\tMesh: ", mesh.attrib["name"])
 
-                    meshPath = skelRootPath + "/meshes/" + mesh.attrib["name"]
+                    meshPath = skelRootPath + "/" + bodyset.attrib["name"] + "/" + mesh.attrib["name"]
                     meshGeom = UsdGeom.Mesh.Define(stage, meshPath)
                     meshPrim = stage.GetPrimAtPath(meshPath)
 
-                    # Sets up binding of this mesh to a joint.
-                    binding = UsdSkel.BindingAPI.Apply(meshPrim)
-                    jointIndicesPrimvar = binding.CreateJointIndicesPrimvar(True)
-                    jointWeightsPrimvar = binding.CreateJointWeightsPrimvar(True)
-                    binding.SetRigidJointInfluence(bodyIndex, 1.0)
-
-                    meshBodyDict[meshGeom] = body.attrib["name"]
-
                     scaleFactor = mesh.find("./scale_factors")
                     scaleFactors = [float(x) for x in scaleFactor.text.split()]
-                    meshScaleOp = meshGeom.AddScaleOp()
-                    meshScaleOp.Set(Gf.Vec3f(scaleFactors))
+                    meshBodyDict[meshGeom] = (body.attrib["name"], scaleFactors)
 
                     color = mesh.find("./Appearance/color")
-                    # for color in mesh.findall("./Appearance/color"):
                     colors = [float(x) for x in color.text.split()]
                     colorAttr = meshGeom.GetDisplayColorAttr()
                     colorAttr.Set([tuple(colors)])
@@ -240,7 +233,6 @@ def writeUsd(parseTree, usdPath, geomPath, markerSpheres):
                     opacityAttr.Set([opacityValue])
 
                     meshFile = mesh.find("./mesh_file")
-                    # print("\t\t\tMeshFile: ", meshFile.text)
 
                     meshPath = geomPath + "/" + meshFile.text
                     ( faceVertexCounts, faceVertexIndices, points ) = getMeshArrays(meshPath)
@@ -253,16 +245,14 @@ def writeUsd(parseTree, usdPath, geomPath, markerSpheres):
 
                     pointsAttr = meshPrim.CreateAttribute('points', Sdf.ValueTypeNames.Float3Array)
                     pointsAttr.Set(Vt.Vec3fArray.FromNumpy(points))
+
                 bodyIndex = bodyIndex + 1
                 # End Body Loop
 
             for wrappedObject in body.findall("./WrapObjectSet/objects/*"):
                 print("\t\t WrappedObject[", wrappedObject.tag, "] = ", wrappedObject.attrib["name"])
 
-        # print("meshBodyDict: ", meshBodyDict)
-        # print("bodyName2Index: ", bodyName2Index)
-
-        # Parse joints
+        # Parse joints: Not needed
         jointNames = Vt.TokenArray([joint.attrib["name"] for joint in model.findall("./JointSet/objects/*")])
         skeleton.GetJointNamesAttr().Set(jointNames)
 
@@ -274,7 +264,6 @@ def writeUsd(parseTree, usdPath, geomPath, markerSpheres):
         bindTransforms=[] # World space transform of each joint
         restTransforms=[] # Local space rest transforms of each joint, fallback for joints with no animation.
         for joint in model.findall("./JointSet/objects/*"):
-            # print("\tJoint Type:", joint.tag, "[", joint.attrib["name"], "]")
             parentFrame = joint.find("./socket_parent_frame").text
             childFrame = joint.find("./socket_child_frame").text
             jointFramesDict[joint.attrib["name"]] = (parentFrame, childFrame)
@@ -295,7 +284,7 @@ def writeUsd(parseTree, usdPath, geomPath, markerSpheres):
             if joint.tag == "CustomJoint":
                 spatialTransform = SpatialTransform(joint)
                 (spatialTranslation, spatialOrientation) = spatialTransform.calcTransform(0.0)
-                # print("SpatialTransform = ", spatialTranslation, spatialOrientation)
+
             # Compute custom joint offset, bake it into the bind transform
             localSpatialTransform = Gf.Matrix4d(spatialOrientation, spatialTranslation)
 
@@ -343,26 +332,20 @@ def writeUsd(parseTree, usdPath, geomPath, markerSpheres):
         skeleton.GetRestTransformsAttr().Set(restTransformsArray)
 
         for meshGeom in meshBodyDict:
-            body = meshBodyDict[meshGeom]
+            (body, scalefactors) = meshBodyDict[meshGeom]
+
+            # Sets up binding of this mesh to a joint.
+            binding = UsdSkel.BindingAPI.Apply(meshGeom.GetPrim())
+            binding.CreateSkeletonRel().SetTargets([skeleton.GetPrim().GetPath()])
+            bodyIndex = bodyName2Index[body]
+            binding.SetRigidJointInfluence(bodyIndex, 1.0)
+
+            # Set up geometry transform for binding
             (inboardTranslation, inboardOrientation) = bodyJointOffsetDict[body]
             invInboardTransform = Gf.Matrix4d(inboardOrientation, inboardTranslation).GetInverse()
-            transformOp = meshGeom.AddTransformOp()
-            transformOp.Set(invInboardTransform * bindTransformsDict[body])
-
-            # We previously added a scale operation, but this must be applied the most locally, so the order needs to be changed in the transform list.
-            # Reverse order of transforms, so that scale is the most local transform (last in list)
-            transformList = meshGeom.GetOrderedXformOps()
-            transformList.reverse()
-            meshGeom.SetXformOpOrder(transformList)
-
-        #print("Joint parents: ", jointParents)
-        #print("Joint Frame Dict: ", jointFramesDict)
-        #print("PhysicalOffsetFrame: ", jointOffsetsFramesDict)
-        #print("BindTransformsDict: ", bindTransformsDict)
-
-        # Find mesh transforms from joint transform data.
-
-
+            geomBindAttr = binding.CreateGeomBindTransformAttr()
+            scaleTransform = Gf.Matrix4d().GetInverse().SetScale(scalefactors)
+            geomBindAttr.Set(scaleTransform * invInboardTransform * bindTransformsDict[body])
 
         # TODO: Physical properties for simulation
         # Mass, center of mass and inertia tensor data per body
@@ -377,6 +360,9 @@ def writeUsd(parseTree, usdPath, geomPath, markerSpheres):
         # Parse marker set
         for markerset in model.findall("./MarkerSet"):
             #print("\tMarker set:", markerset.attrib["name"])
+            markersetPath = skelRootPath + "/" + markerset.attrib["name"]
+            markersetXform = UsdGeom.Xform.Define(stage, markersetPath)
+
             for marker in markerset.findall("./objects/Marker"):
                 parentFrame = marker.find("./socket_parent_frame")
                 location = marker.find("./location")
@@ -390,22 +376,25 @@ def writeUsd(parseTree, usdPath, geomPath, markerSpheres):
                     markerGeom = UsdGeom.Cube.Define(stage, skelRootPath + "/" + markerset.attrib["name"] + "/" + marker.attrib["name"].replace(".","_"))
                     markerGeom.GetSizeAttr().Set(0.03)
 
-
                 markerGeom.GetDisplayColorAttr().Set([(1.0, 0.0, 0.0)])
-
-                markerLocationOp = markerGeom.AddTranslateOp()
-                markerLocationOp.Set(Gf.Vec3f(localCoords))
-                markerTransformOp = markerGeom.AddTransformOp()
                 body = os.path.basename(parentFrame.text)
                 markerTransform = bindTransformsDict[body]
-                markerTransformOp.Set(markerTransform)
 
-                # Sets up binding of this mesh to a joint.
+                # Sets up binding of this marker to a joint.
                 binding = UsdSkel.BindingAPI.Apply(markerGeom.GetPrim())
+
+                # Bind marker to skeleton
+                binding.CreateSkeletonRel().SetTargets([skeleton.GetPrim().GetPath()])
                 jointIndicesPrimvar = binding.CreateJointIndicesPrimvar(True)
                 jointWeightsPrimvar = binding.CreateJointWeightsPrimvar(True)
+
                 bodyIndex = bodyName2Index[body]
                 binding.SetRigidJointInfluence(bodyIndex, 1.0)
+
+                # Set geometry bind transform in world space
+                geomBindAttr = binding.CreateGeomBindTransformAttr()
+                localMarkerTransform = Gf.Matrix4d().SetIdentity().SetTranslate(localCoords)
+                geomBindAttr.Set(markerTransform * localMarkerTransform)
 
         stage.GetRootLayer().Save()
         stage.Export(usdPath + "a") # Save a usda file as well
@@ -419,60 +408,10 @@ def osim2usd(osimPath, usdPath, markerSpheres):
     print(f"Input OpensSim geometry path set to: {geomPath}")
     print(f"Output USD scene path set to: {usdPath}")
 
-
     tree = xmlTree.parse(osimPath)
     usdPath = writeUsd(tree, usdPath, geomPath, markerSpheres)
 
     return usdPath
-
-
-def WriteAnimatedSkel(stage, skelPath, jointPaths,
-                      rootTransformsPerFrame,
-                      jointWorldSpaceTransformsPerFrame,
-                      times, bindTransforms, restTransforms=None):
-    if not len(rootTransformsPerFrame) == len(times):
-        return False
-    if not len(jointWorldSpaceTransformsPerFrame) == len(times):
-        return False
-    if not len(bindTransforms) == len(jointPaths):
-        return False
-    skel = UsdSkel.Skeleton.Define(stage, skelPath)
-    if not skel:
-        Tf.Warn("Failed defining a Skeleton at <%s>.", skelPath)
-        return False
-    numJoints = len(jointPaths)
-    topo = UsdSkel.Topology(jointPaths)
-    valid, whyNot = topo.Validate()
-    if not valid:
-        Tf.Warn("Invalid topology: %s" % reason)
-        return False
-    jointTokens = Vt.TokenArray([jointPath.pathString for jointPath in jointPaths])
-    skel.GetJointsAttr().Set(jointTokens)
-    skel.GetBindTransformsAttr().Set(bindTransforms)
-    if restTransforms and len(restTransforms) == numJoints:
-        skel.GetRestTransformsAttr().Set(restTransforms)
-    rootTransformAttr = skel.MakeMatrixXform()
-    for i, time in enumerate(times):
-        rootTransformAttr.Set(rootTransformsPerFrame[i], time)
-    anim = UsdSkel.Animation.Define(stage, skelPath.AppendChild("Anim"))
-    binding = UsdSkel.BindingAPI.Apply(skel.GetPrim())
-    binding.CreateSkeletonRel().SetTargets([anim.GetPrim().GetPath()])
-    anim.GetJointsAttr().Set(jointTokens)
-    for i, time in enumerate(times):
-        rootTransform = rootTransformsPerFrame[i]
-        jointWorldSpaceTransforms = jointWorldSpaceTransformsPerFrame[i]
-
-        if len(jointWorldSpaceTransforms) == numJoints:
-
-            jointLocalSpaceTransforms = \
-                UsdSkel.ComputeJointLocalTransforms(
-                    topo, jointWorldSpaceTransforms, rootTransform)
-            if jointLocalSpaceTransforms:
-                anim.SetTransforms(jointLocalSpaceTransforms, time)
-    # Don't forget to call Save() on the stage!
-
-    return True
-
 
 def main(argv):
 
