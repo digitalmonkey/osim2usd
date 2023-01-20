@@ -182,7 +182,7 @@ def getMeshArrays(meshPath):
 
 
 
-def writeUsd(parseTree, usdPath, geomPath, markerSpheres):
+def writeUsd(parseTree, usdPath, geomPath, optionsDict):
     root = parseTree.getroot()
     stage = Usd.Stage.CreateNew(usdPath)
 
@@ -358,49 +358,50 @@ def writeUsd(parseTree, usdPath, geomPath, markerSpheres):
         #    print("\tForce Type:", force.tag, "[", force.attrib["name"],"]")
 
         # Parse marker set
-        for markerset in model.findall("./MarkerSet"):
-            #print("\tMarker set:", markerset.attrib["name"])
-            markersetPath = skelRootPath + "/" + markerset.attrib["name"]
-            markersetXform = UsdGeom.Xform.Define(stage, markersetPath)
+        if optionsDict["exportMarkers"] == True:
+            for markerset in model.findall("./MarkerSet"):
+                #print("\tMarker set:", markerset.attrib["name"])
+                markersetPath = skelRootPath + "/" + markerset.attrib["name"]
+                markersetXform = UsdGeom.Xform.Define(stage, markersetPath)
 
-            for marker in markerset.findall("./objects/Marker"):
-                parentFrame = marker.find("./socket_parent_frame")
-                location = marker.find("./location")
-                localCoords = [float(x) for x in location.text.split()]
-                #print("\t\tMarker ", marker.attrib["name"], ": ", parentFrame.text, localCoords)
-                # Replace . in names with _ for proper USD primitive path names.
-                if markerSpheres == True:
-                    markerGeom = UsdGeom.Sphere.Define(stage, skelRootPath + "/" + markerset.attrib["name"] + "/" + marker.attrib["name"].replace(".", "_"))
-                    markerGeom.GetRadiusAttr().Set(0.01)
-                else:
-                    markerGeom = UsdGeom.Cube.Define(stage, skelRootPath + "/" + markerset.attrib["name"] + "/" + marker.attrib["name"].replace(".","_"))
-                    markerGeom.GetSizeAttr().Set(0.03)
+                for marker in markerset.findall("./objects/Marker"):
+                    parentFrame = marker.find("./socket_parent_frame")
+                    location = marker.find("./location")
+                    localCoords = [float(x) for x in location.text.split()]
+                    #print("\t\tMarker ", marker.attrib["name"], ": ", parentFrame.text, localCoords)
+                    # Replace . in names with _ for proper USD primitive path names.
+                    markerScale = optionsDict["markerSize"]
+                    if optionsDict["markerSpheres"] == True:
+                        markerGeom = UsdGeom.Sphere.Define(stage, skelRootPath + "/" + markerset.attrib["name"] + "/" + marker.attrib["name"].replace(".", "_"))
+                    else:
+                        markerGeom = UsdGeom.Cube.Define(stage, skelRootPath + "/" + markerset.attrib["name"] + "/" + marker.attrib["name"].replace(".","_"))
 
-                markerGeom.GetDisplayColorAttr().Set([(1.0, 0.0, 0.0)])
-                body = os.path.basename(parentFrame.text)
-                markerTransform = bindTransformsDict[body]
+                    markerGeom.GetDisplayColorAttr().Set([(1.0, 0.0, 0.0)])
+                    body = os.path.basename(parentFrame.text)
+                    markerTransform = bindTransformsDict[body]
 
-                # Sets up binding of this marker to a joint.
-                binding = UsdSkel.BindingAPI.Apply(markerGeom.GetPrim())
+                    # Sets up binding of this marker to a joint.
+                    binding = UsdSkel.BindingAPI.Apply(markerGeom.GetPrim())
 
-                # Bind marker to skeleton
-                binding.CreateSkeletonRel().SetTargets([skeleton.GetPrim().GetPath()])
-                jointIndicesPrimvar = binding.CreateJointIndicesPrimvar(True)
-                jointWeightsPrimvar = binding.CreateJointWeightsPrimvar(True)
+                    # Bind marker to skeleton
+                    binding.CreateSkeletonRel().SetTargets([skeleton.GetPrim().GetPath()])
+                    jointIndicesPrimvar = binding.CreateJointIndicesPrimvar(True)
+                    jointWeightsPrimvar = binding.CreateJointWeightsPrimvar(True)
 
-                bodyIndex = bodyName2Index[body]
-                binding.SetRigidJointInfluence(bodyIndex, 1.0)
+                    bodyIndex = bodyName2Index[body]
+                    binding.SetRigidJointInfluence(bodyIndex, 1.0)
 
-                # Set geometry bind transform in world space
-                geomBindAttr = binding.CreateGeomBindTransformAttr()
-                localMarkerTransform = Gf.Matrix4d().SetIdentity().SetTranslate(localCoords)
-                geomBindAttr.Set(markerTransform * localMarkerTransform)
+                    # Set geometry bind transform in world space
+                    geomBindAttr = binding.CreateGeomBindTransformAttr()
+                    markerScaleTransform = Gf.Matrix4d().SetIdentity().SetScale([markerScale, markerScale, markerScale])
+                    localMarkerTransform = Gf.Matrix4d().SetIdentity().SetTranslate(localCoords)
+                    geomBindAttr.Set(markerScaleTransform * markerTransform * localMarkerTransform)
 
         stage.GetRootLayer().Save()
         stage.Export(usdPath + "a") # Save a usda file as well
         return usdPath
 
-def osim2usd(osimPath, usdPath, markerSpheres):
+def osim2usd(osimPath, usdPath, optionsDict):
 
     print(f"Input OpenSim model path set to: {osimPath}")
 
@@ -409,7 +410,7 @@ def osim2usd(osimPath, usdPath, markerSpheres):
     print(f"Output USD scene path set to: {usdPath}")
 
     tree = xmlTree.parse(osimPath)
-    usdPath = writeUsd(tree, usdPath, geomPath, markerSpheres)
+    usdPath = writeUsd(tree, usdPath, geomPath, optionsDict)
 
     return usdPath
 
@@ -421,7 +422,10 @@ def main(argv):
     modelPath = "./Model/LaiArnoldModified2017_poly_withArms_weldHand_scaled_adjusted.osim"
     inputPath = sessionPath + modelPath
     outputPath = os.path.splitext(inputPath)[0] + ".usd"
-    markersAsSpheres = True
+    optionsDict = dict()
+    optionsDict["markerSpheres"] = False
+    optionsDict["exportMarkers"]  = True
+    optionsDict["markerSize"] = 0.01
 
     opts, args = getopt.getopt(argv,"hi:o:",["input=","output="])
     for opt, arg in opts:
@@ -434,9 +438,13 @@ def main(argv):
             outputPath = arg
         elif opt in ("-m", "--markers"):
             if arg == "spheres":
-                markersAsSpheres = True
+                optionsDict["markerSpheres"] = True
+            elif arg == "none":
+                optionsDict["exportMarkers"] = False
+        elif opt in ("-s", "--markerSize"):
+            options["markerSize"] = float(arg)
 
-    usdPath = osim2usd(inputPath, outputPath, markersAsSpheres)
+    usdPath = osim2usd(inputPath, outputPath, optionsDict)
     print(f"Saved usdPath to: {usdPath}")
 
 # Checks if running this file from a script vs. a module. Useful if planning to use this file also as a module
