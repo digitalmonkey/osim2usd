@@ -249,35 +249,36 @@ def writeUsd(parseTree, usdPath, geomPath, optionsDict):
                     pointsAttr.Set(Vt.Vec3fArray.FromNumpy(points))
 
                 # Process wrap objects.
-                for wrappedObject in body.findall("./WrapObjectSet/objects/*"):
-                    print("\t\tWrappedObject[", wrappedObject.tag, "] =", wrappedObject.attrib["name"])
-                    if wrappedObject.tag == "WrapCylinder":
-                        wrapPath = skelRootPath + "/" + bodyset.attrib["name"] + "/" + wrappedObject.attrib["name"]
-                        wrapCylinder = UsdGeom.Cylinder.Define(stage, wrapPath)
+                if optionsDict["wrapObjects"] == True:
+                    for wrappedObject in body.findall("./WrapObjectSet/objects/*"):
+                        print("\t\tWrappedObject[", wrappedObject.tag, "] =", wrappedObject.attrib["name"])
+                        if wrappedObject.tag == "WrapCylinder":
+                            wrapPath = skelRootPath + "/" + bodyset.attrib["name"] + "/" + wrappedObject.attrib["name"]
+                            wrapCylinder = UsdGeom.Cylinder.Define(stage, wrapPath)
 
-                        # Set bind transform
-                        wrapRotationXYZ = Gf.Vec3d([float(c) for c in wrappedObject.find("./xyz_body_rotation").text.split()])
-                        wrapTranslation = Gf.Vec3d([float(c) for c in wrappedObject.find("./translation").text.split()])
-                        xRotation = Gf.Rotation(Gf.Vec3d([1.0, 0.0, 0.0]), math.degrees(wrapRotationXYZ[0]))
-                        yRotation = Gf.Rotation(Gf.Vec3d([0.0, 1.0, 0.0]), math.degrees(wrapRotationXYZ[1]))
-                        zRotation = Gf.Rotation(Gf.Vec3d([0.0, 0.0, 1.0]), math.degrees(wrapRotationXYZ[2]))
-                        wrapOrientation = xRotation * yRotation * zRotation
-                        wrapTransform = Gf.Matrix4d(wrapOrientation, wrapTranslation)
-                        wrapActive = wrappedObject.find("./active").text
-                        if wrapActive == "false":
-                            wrapCylinder.SetActive(False)
-                        wrapQuadrant = wrappedObject.find("./quadrant").text
-                        wrapCylinder.GetPrim().CreateAttribute("quadrant", Sdf.ValueTypeNames.String).Set(wrapQuadrant)
-                        wrapColor = Gf.Vec3d([float(c) for c in wrappedObject.find("./Appearance/color").text.split()])
-                        wrapCylinder.GetDisplayColorAttr().Set([(wrapColor[0], wrapColor[1], wrapColor[2])])
-                        wrapOpacity = float(wrappedObject.find("./Appearance/opacity").text)
-                        wrapCylinder.GetDisplayOpacityAttr().Set([wrapOpacity])
-                        wrapCylinder.GetAxisAttr().Set("Z")
-                        wrapRadius = float(wrappedObject.find("./radius").text)
-                        wrapCylinder.GetRadiusAttr().Set(wrapRadius)
-                        wrapLength = float(wrappedObject.find("./length").text)
-                        wrapCylinder.GetHeightAttr().Set(wrapLength)
-                        wrapBodyDict[wrapCylinder] = (body.attrib["name"], wrapTransform)
+                            # Set bind transform
+                            wrapRotationXYZ = Gf.Vec3d([float(c) for c in wrappedObject.find("./xyz_body_rotation").text.split()])
+                            wrapTranslation = Gf.Vec3d([float(c) for c in wrappedObject.find("./translation").text.split()])
+                            xRotation = Gf.Rotation(Gf.Vec3d([1.0, 0.0, 0.0]), math.degrees(wrapRotationXYZ[0]))
+                            yRotation = Gf.Rotation(Gf.Vec3d([0.0, 1.0, 0.0]), math.degrees(wrapRotationXYZ[1]))
+                            zRotation = Gf.Rotation(Gf.Vec3d([0.0, 0.0, 1.0]), math.degrees(wrapRotationXYZ[2]))
+                            wrapOrientation = xRotation * yRotation * zRotation
+                            wrapTransform = Gf.Matrix4d(wrapOrientation, wrapTranslation)
+                            wrapActive = wrappedObject.find("./active").text
+                            if wrapActive == "false":
+                                wrapCylinder.SetActive(False)
+                            wrapQuadrant = wrappedObject.find("./quadrant").text
+                            wrapCylinder.GetPrim().CreateAttribute("quadrant", Sdf.ValueTypeNames.String).Set(wrapQuadrant)
+                            wrapColor = Gf.Vec3d([float(c) for c in wrappedObject.find("./Appearance/color").text.split()])
+                            wrapCylinder.GetDisplayColorAttr().Set([(wrapColor[0], wrapColor[1], wrapColor[2])])
+                            wrapOpacity = float(wrappedObject.find("./Appearance/opacity").text)
+                            wrapCylinder.GetDisplayOpacityAttr().Set([wrapOpacity])
+                            wrapCylinder.GetAxisAttr().Set("Z")
+                            wrapRadius = float(wrappedObject.find("./radius").text)
+                            wrapCylinder.GetRadiusAttr().Set(wrapRadius)
+                            wrapLength = float(wrappedObject.find("./length").text)
+                            wrapCylinder.GetHeightAttr().Set(wrapLength)
+                            wrapBodyDict[wrapCylinder] = (body.attrib["name"], wrapTransform)
 
                 bodyIndex = bodyIndex + 1
                 # End Body Loop
@@ -379,21 +380,22 @@ def writeUsd(parseTree, usdPath, geomPath, optionsDict):
             geomBindAttr.Set(scaleTransform * invInboardTransform * bindTransformsDict[body])
 
         # Adjust geometry binding transform to take into account inboard translations
-        for wrapGeom in wrapBodyDict:
-            (body, wrapTransform) = wrapBodyDict[wrapGeom]
+        if optionsDict["wrapObjects"] == True:
+            for wrapGeom in wrapBodyDict:
+                (body, wrapTransform) = wrapBodyDict[wrapGeom]
 
-            binding = UsdSkel.BindingAPI.Apply(wrapGeom.GetPrim())
-            binding.CreateSkeletonRel().SetTargets([skeleton.GetPrim().GetPath()])
-            jointIndicesPrimvar = binding.CreateJointIndicesPrimvar(True)
-            jointWeightsPrimvar = binding.CreateJointWeightsPrimvar(True)
+                binding = UsdSkel.BindingAPI.Apply(wrapGeom.GetPrim())
+                binding.CreateSkeletonRel().SetTargets([skeleton.GetPrim().GetPath()])
+                jointIndicesPrimvar = binding.CreateJointIndicesPrimvar(True)
+                jointWeightsPrimvar = binding.CreateJointWeightsPrimvar(True)
 
-            bodyIndex = bodyName2Index[body]
-            binding.SetRigidJointInfluence(bodyIndex, 1.0)
+                bodyIndex = bodyName2Index[body]
+                binding.SetRigidJointInfluence(bodyIndex, 1.0)
 
-            (inboardTranslation, inboardOrientation) = bodyJointOffsetDict[body]
-            invInboardTransform = Gf.Matrix4d(inboardOrientation, inboardTranslation).GetInverse()
-            geomBindAttr = binding.CreateGeomBindTransformAttr()
-            geomBindAttr.Set(wrapTransform * invInboardTransform * bindTransformsDict[body])
+                (inboardTranslation, inboardOrientation) = bodyJointOffsetDict[body]
+                invInboardTransform = Gf.Matrix4d(inboardOrientation, inboardTranslation).GetInverse()
+                geomBindAttr = binding.CreateGeomBindTransformAttr()
+                geomBindAttr.Set(wrapTransform * invInboardTransform * bindTransformsDict[body])
 
 
         # TODO: Physical properties for simulation
@@ -403,8 +405,34 @@ def writeUsd(parseTree, usdPath, geomPath, optionsDict):
         # TODO: New wrap object schema
 
         # Parse forces (like muscles)
-        #for force in model.findall("./ForceSet/objects/*"):
-        #    print("\tForce Type:", force.tag, "[", force.attrib["name"],"]")
+        if optionsDict["muscles"] == True:
+            muscles = model.findall("./ForceSet/objects/Millard2012EquilibriumMuscle")
+            muscleSet = UsdGeom.BasisCurves.Define(stage, skelRootPath + "/muscles")
+            muscleSet.GetTypeAttr().Set("linear")
+            muscleSet.GetWrapAttr().Set("nonperiodic")
+            muscleSet.GetDisplayColorAttr().Set([(1.0, 0.0, 0.0)])
+
+            pointsAttr = muscleSet.CreatePointsAttr()
+            widthsAttr = muscleSet.CreateWidthsAttr()
+
+            muscleCounts = []
+            musclePoints = []
+            widths = []
+            for muscle in muscles:
+                points = muscle.findall("./GeometryPath/PathPointSet/objects/*")
+                muscleCounts.append(len(points))
+                print("\t\tMuscle:", muscle.tag, "[", muscle.attrib["name"], "] = ", len(points), " points.")
+                for point in points:
+                    parentFrame = point.find("./socket_parent_frame").text
+                    body = os.path.basename(parentFrame)
+                    bodyTransform = bindTransformsDict[body]
+                    location = [float(x) for x in point.find("./location").text.split()]
+                    musclePoint = bodyTransform.Transform(Gf.Vec3f(location))
+                    musclePoints.append(musclePoint)
+                    widths.append(0.1)
+            muscleSet.GetCurveVertexCountsAttr().Set(muscleCounts)
+            pointsAttr.Set(Vt.Vec3fArray(musclePoints))
+            widthsAttr.Set(widths)
 
         # Parse marker set
         if optionsDict["exportMarkers"] == True:
@@ -476,6 +504,8 @@ def main(argv):
     optionsDict["exportMarkers"]  = True
     optionsDict["markerSize"] = 0.01
     optionsDict["jointNames"] = False
+    optionsDict["wrapObjects"] = True
+    optionsDict["muscles"] = True
 
     opts, args = getopt.getopt(argv,"hi:o:",["input=","output="])
     for opt, arg in opts:
