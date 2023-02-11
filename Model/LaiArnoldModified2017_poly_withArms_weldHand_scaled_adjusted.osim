@@ -1470,7 +1470,7 @@
 								<!--The opacity used to display the geometry between 0:transparent, 1:opaque.-->
 								<opacity>1</opacity>
 								<!--The color, (red, green, blue), [0, 1], used to display the geometry. -->
-								<color>1 1 1</color>
+								<color>1 1 0.80000001192092896</color>
 							</Appearance>
 							<!--Name of geometry file.-->
 							<mesh_file>l_tibia.vtp</mesh_file>
@@ -1485,7 +1485,7 @@
 								<!--The opacity used to display the geometry between 0:transparent, 1:opaque.-->
 								<opacity>1</opacity>
 								<!--The color, (red, green, blue), [0, 1], used to display the geometry. -->
-								<color>1 1 1</color>
+								<color>1 1 0.80000001192092896</color>
 							</Appearance>
 							<!--Name of geometry file.-->
 							<mesh_file>l_fibula.vtp</mesh_file>
@@ -1730,7 +1730,7 @@
 								<!--The opacity used to display the geometry between 0:transparent, 1:opaque.-->
 								<opacity>1</opacity>
 								<!--The color, (red, green, blue), [0, 1], used to display the geometry. -->
-								<color>1 1 1</color>
+								<color>0 0 1</color>
 							</Appearance>
 							<!--Name of geometry file.-->
 							<mesh_file>l_talus.vtp</mesh_file>
@@ -1768,7 +1768,7 @@
 								<!--The opacity used to display the geometry between 0:transparent, 1:opaque.-->
 								<opacity>1</opacity>
 								<!--The color, (red, green, blue), [0, 1], used to display the geometry. -->
-								<color>1 1 1</color>
+								<color>0.20000000298023224 1 1</color>
 								<!--Visuals applied to surfaces associated with this Appearance.-->
 								<SurfaceProperties>
 									<!--The representation (1:Points, 2:Wire, 3:Shaded) used to display the object.-->
@@ -1811,7 +1811,7 @@
 								<!--The opacity used to display the geometry between 0:transparent, 1:opaque.-->
 								<opacity>1</opacity>
 								<!--The color, (red, green, blue), [0, 1], used to display the geometry. -->
-								<color>1 1 1</color>
+								<color>0.80000001192092896 0 0.80000001192092896</color>
 							</Appearance>
 							<!--Name of geometry file.-->
 							<mesh_file>l_bofoot.vtp</mesh_file>
@@ -1849,7 +1849,7 @@
 								<!--The opacity used to display the geometry between 0:transparent, 1:opaque.-->
 								<opacity>1</opacity>
 								<!--The color, (red, green, blue), [0, 1], used to display the geometry. -->
-								<color>1 1 1</color>
+								<color>1 0.20000000298023224 0.60000002384185791</color>
 							</Appearance>
 							<!--Name of geometry file.-->
 							<mesh_file>hat_spine.vtp</mesh_file>
@@ -1864,7 +1864,7 @@
 								<!--The opacity used to display the geometry between 0:transparent, 1:opaque.-->
 								<opacity>1</opacity>
 								<!--The color, (red, green, blue), [0, 1], used to display the geometry. -->
-								<color>1 1 1</color>
+								<color>1 0.20000000298023224 0.60000002384185791</color>
 							</Appearance>
 							<!--Name of geometry file.-->
 							<mesh_file>hat_jaw.vtp</mesh_file>
@@ -1879,7 +1879,7 @@
 								<!--The opacity used to display the geometry between 0:transparent, 1:opaque.-->
 								<opacity>1</opacity>
 								<!--The color, (red, green, blue), [0, 1], used to display the geometry. -->
-								<color>1 1 1</color>
+								<color>1 0.20000000298023224 0.60000002384185791</color>
 							</Appearance>
 							<!--Name of geometry file.-->
 							<mesh_file>hat_skull.vtp</mesh_file>
@@ -1894,7 +1894,7 @@
 								<!--The opacity used to display the geometry between 0:transparent, 1:opaque.-->
 								<opacity>1</opacity>
 								<!--The color, (red, green, blue), [0, 1], used to display the geometry. -->
-								<color>1 1 1</color>
+								<color>1 0.20000000298023224 0.60000002384185791</color>
 							</Appearance>
 							<!--Name of geometry file.-->
 							<mesh_file>hat_ribs_scap.vtp</mesh_file>
@@ -1934,7 +1934,7 @@
 								<!--The opacity used to display the geometry between 0:transparent, 1:opaque.-->
 								<opacity>1</opacity>
 								<!--The color, (red, green, blue), [0, 1], used to display the geometry. -->
-								<color>1 1 1</color>
+								<color>0.20000000298023224 1 0.20000000298023224</color>
 								<!--Visuals applied to surfaces associated with this Appearance.-->
 								<SurfaceProperties>
 									<!--The representation (1:Points, 2:Wire, 3:Shaded) used to display the object.-->
@@ -1979,7 +1979,7 @@
 								<!--The opacity used to display the geometry between 0:transparent, 1:opaque.-->
 								<opacity>1</opacity>
 								<!--The color, (red, green, blue), [0, 1], used to display the geometry. -->
-								<color>1 1 1</color>
+								<color>0.20000000298023224 0.20000000298023224 1</color>
 							</Appearance>
 							<!--Name of geometry file.-->
 							<mesh_file>ulna_rv.vtp</mesh_file>
@@ -2019,7 +2019,7 @@
 								<!--The opacity used to display the geometry between 0:transparent, 1:opaque.-->
 								<opacity>1</opacity>
 								<!--The color, (red, green, blue), [0, 1], used to display the geometry. -->
-								<color>1 1 1</color>
+								<color>0.40000000596046448 1 1</color>
 							</Appearance>
 							<!--Name of geometry file.-->
 							<mesh_file>radius_rv.vtp</mesh_file>

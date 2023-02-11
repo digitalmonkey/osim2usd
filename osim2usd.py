@@ -263,8 +263,11 @@ def writeUsd(parseTree, usdPath, geomPath, optionsDict):
                         zRotation = Gf.Rotation(Gf.Vec3d([0.0, 0.0, 1.0]), math.degrees(wrapRotationXYZ[2]))
                         wrapOrientation = xRotation * yRotation * zRotation
                         wrapTransform = Gf.Matrix4d(wrapOrientation, wrapTranslation)
-                        wrapActive = wrappedObject.find("./active")
-                        wrapQuadrant = wrappedObject.find("./quadrant")
+                        wrapActive = wrappedObject.find("./active").text
+                        if wrapActive == "false":
+                            wrapCylinder.SetActive(False)
+                        wrapQuadrant = wrappedObject.find("./quadrant").text
+                        wrapCylinder.GetPrim().CreateAttribute("quadrant", Sdf.ValueTypeNames.String).Set(wrapQuadrant)
                         wrapColor = Gf.Vec3d([float(c) for c in wrappedObject.find("./Appearance/color").text.split()])
                         wrapCylinder.GetDisplayColorAttr().Set([(wrapColor[0], wrapColor[1], wrapColor[2])])
                         wrapOpacity = float(wrappedObject.find("./Appearance/opacity").text)
