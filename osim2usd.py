@@ -236,8 +236,8 @@ def writeUsd(parseTree, usdPath, geomPath, optionsDict):
 
                     meshFile = mesh.find("./mesh_file")
 
-                    meshPath = geomPath + "/" + meshFile.text
-                    ( faceVertexCounts, faceVertexIndices, points ) = getMeshArrays(meshPath)
+                    meshFilePath = geomPath + "/" + meshFile.text
+                    ( faceVertexCounts, faceVertexIndices, points ) = getMeshArrays(meshFilePath)
 
                     faceVertexCountsAttr = meshPrim.CreateAttribute('faceVertexCounts', Sdf.ValueTypeNames.IntArray)
                     faceVertexCountsAttr.Set(Vt.IntArray(faceVertexCounts))
