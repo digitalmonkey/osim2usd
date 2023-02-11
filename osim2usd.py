@@ -200,6 +200,7 @@ def writeUsd(parseTree, usdPath, geomPath, optionsDict):
         binding = UsdSkel.BindingAPI.Apply(skeleton.GetPrim())
 
         meshBodyDict = dict()
+        wrapBodyDict = dict()
         for bodyset in model.findall("./BodySet"):
             print("Bodyset: ", bodyset.attrib["name"])
             bodysetPath = skelRootPath + "/" + bodyset.attrib["name"]
@@ -211,8 +212,9 @@ def writeUsd(parseTree, usdPath, geomPath, optionsDict):
                 print("\tBody: ", body.attrib["name"])
                 bodyName2Index[body.attrib["name"]] = bodyIndex
 
+                # Process mesh geometry.
                 for mesh in body.findall("./attached_geometry/Mesh"):
-                    print("\t\tMesh: ", mesh.attrib["name"])
+                    # print("\t\tMesh: ", mesh.attrib["name"])
 
                     meshPath = skelRootPath + "/" + bodyset.attrib["name"] + "/" + mesh.attrib["name"]
                     meshGeom = UsdGeom.Mesh.Define(stage, meshPath)
@@ -246,15 +248,41 @@ def writeUsd(parseTree, usdPath, geomPath, optionsDict):
                     pointsAttr = meshPrim.CreateAttribute('points', Sdf.ValueTypeNames.Float3Array)
                     pointsAttr.Set(Vt.Vec3fArray.FromNumpy(points))
 
+                # Process wrap objects.
+                for wrappedObject in body.findall("./WrapObjectSet/objects/*"):
+                    print("\t\tWrappedObject[", wrappedObject.tag, "] =", wrappedObject.attrib["name"])
+                    if wrappedObject.tag == "WrapCylinder":
+                        wrapPath = skelRootPath + "/" + bodyset.attrib["name"] + "/" + wrappedObject.attrib["name"]
+                        wrapCylinder = UsdGeom.Cylinder.Define(stage, wrapPath)
+
+                        # Set bind transform
+                        wrapRotationXYZ = Gf.Vec3d([float(c) for c in wrappedObject.find("./xyz_body_rotation").text.split()])
+                        wrapTranslation = Gf.Vec3d([float(c) for c in wrappedObject.find("./translation").text.split()])
+                        xRotation = Gf.Rotation(Gf.Vec3d([1.0, 0.0, 0.0]), math.degrees(wrapRotationXYZ[0]))
+                        yRotation = Gf.Rotation(Gf.Vec3d([0.0, 1.0, 0.0]), math.degrees(wrapRotationXYZ[1]))
+                        zRotation = Gf.Rotation(Gf.Vec3d([0.0, 0.0, 1.0]), math.degrees(wrapRotationXYZ[2]))
+                        wrapOrientation = xRotation * yRotation * zRotation
+                        wrapTransform = Gf.Matrix4d(wrapOrientation, wrapTranslation)
+                        wrapActive = wrappedObject.find("./active")
+                        wrapQuadrant = wrappedObject.find("./quadrant")
+                        wrapColor = Gf.Vec3d([float(c) for c in wrappedObject.find("./Appearance/color").text.split()])
+                        wrapCylinder.GetDisplayColorAttr().Set([(wrapColor[0], wrapColor[1], wrapColor[2])])
+                        wrapOpacity = float(wrappedObject.find("./Appearance/opacity").text)
+                        wrapCylinder.GetDisplayOpacityAttr().Set([wrapOpacity])
+                        wrapCylinder.GetAxisAttr().Set("Z")
+                        wrapRadius = float(wrappedObject.find("./radius").text)
+                        wrapCylinder.GetRadiusAttr().Set(wrapRadius)
+                        wrapLength = float(wrappedObject.find("./length").text)
+                        wrapCylinder.GetHeightAttr().Set(wrapLength)
+                        wrapBodyDict[wrapCylinder] = (body.attrib["name"], wrapTransform)
+
                 bodyIndex = bodyIndex + 1
                 # End Body Loop
 
-            for wrappedObject in body.findall("./WrapObjectSet/objects/*"):
-                print("\t\t WrappedObject[", wrappedObject.tag, "] = ", wrappedObject.attrib["name"])
-
         # Parse joints: Not needed
-        jointNames = Vt.TokenArray([joint.attrib["name"] for joint in model.findall("./JointSet/objects/*")])
-        skeleton.GetJointNamesAttr().Set(jointNames)
+        if optionsDict["jointNames"] == True:
+            jointNames = Vt.TokenArray([joint.attrib["name"] for joint in model.findall("./JointSet/objects/*")])
+            skeleton.GetJointNamesAttr().Set(jointNames)
 
         jointFramesDict = dict()
         bodyJointOffsetDict = dict()
@@ -347,6 +375,24 @@ def writeUsd(parseTree, usdPath, geomPath, optionsDict):
             scaleTransform = Gf.Matrix4d().GetInverse().SetScale(scalefactors)
             geomBindAttr.Set(scaleTransform * invInboardTransform * bindTransformsDict[body])
 
+        # Adjust geometry binding transform to take into account inboard translations
+        for wrapGeom in wrapBodyDict:
+            (body, wrapTransform) = wrapBodyDict[wrapGeom]
+
+            binding = UsdSkel.BindingAPI.Apply(wrapGeom.GetPrim())
+            binding.CreateSkeletonRel().SetTargets([skeleton.GetPrim().GetPath()])
+            jointIndicesPrimvar = binding.CreateJointIndicesPrimvar(True)
+            jointWeightsPrimvar = binding.CreateJointWeightsPrimvar(True)
+
+            bodyIndex = bodyName2Index[body]
+            binding.SetRigidJointInfluence(bodyIndex, 1.0)
+
+            (inboardTranslation, inboardOrientation) = bodyJointOffsetDict[body]
+            invInboardTransform = Gf.Matrix4d(inboardOrientation, inboardTranslation).GetInverse()
+            geomBindAttr = binding.CreateGeomBindTransformAttr()
+            geomBindAttr.Set(wrapTransform * invInboardTransform * bindTransformsDict[body])
+
+
         # TODO: Physical properties for simulation
         # Mass, center of mass and inertia tensor data per body
 
@@ -426,6 +472,7 @@ def main(argv):
     optionsDict["markerSpheres"] = False
     optionsDict["exportMarkers"]  = True
     optionsDict["markerSize"] = 0.01
+    optionsDict["jointNames"] = False
 
     opts, args = getopt.getopt(argv,"hi:o:",["input=","output="])
     for opt, arg in opts:
@@ -434,6 +481,11 @@ def main(argv):
             sys.exit()
         elif opt in ("-i", "--input"):
             inputPath = arg
+        elif opt in ("-j", "--jointNames"):
+            if arg == "1":
+                optionsDict["jointNames"] = True
+            else:
+                optionsDict["jointNames"] = False
         elif opt in ("-o", "--output"):
             outputPath = arg
         elif opt in ("-m", "--markers"):
