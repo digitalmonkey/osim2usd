@@ -81,17 +81,41 @@ def mot2quats(motionPath, outputPath, modelPath, optionsDict):
 
     poseTrajectories = []
     times = []
+
+    referenceBody = None
+    if "relativeTo" in optionsDict:
+        for body in model.getBodyList():
+            if body.getName() == optionsDict["relativeTo"]:
+                referenceBody = body
+                print("Making poses relative to ", referenceBody.getName())
+
     for i in range(motionTrajectory.getSize()):
         motionState = motionTrajectory.get(i)
         model.realizePosition(motionState)
         times.append(motionState.getTime())
 
+        invReferencePose = None
+        if referenceBody != None:
+
+             invRotation: osim.Rotation = None
+             invRotation = osim.Rotation(referenceBody.getRotationInGround(motionState).invert())
+             invPosition = referenceBody.getPositionInGround(motionState)
+             invPosition[0] = -1.0 * invPosition[0]
+             invPosition[1] = -1.0 * invPosition[1]
+             invPosition[2] = -1.0 * invPosition[2]
+             invReferencePose = (invPosition, invRotation)
+
         # Loop through bodies in model.
         bodyPoses = []
         for body in model.getBodyList():
             positionGround = body.getPositionInGround(motionState)
-            rotationGround = body.getRotationInGround(motionState).convertRotationToQuaternion()
-            bodyPoses.append((positionGround, rotationGround))
+            rotationGround = body.getRotationInGround(motionState)
+            if invReferencePose: # Make pose relative to the reference pose
+                 positionGround[0] = positionGround[0] + invReferencePose[0][0]
+                 positionGround[1] = positionGround[1] + invReferencePose[0][1]
+                 positionGround[2] = positionGround[2] + invReferencePose[0][2]
+                 rotationGround *= invReferencePose[1]
+            bodyPoses.append((positionGround, rotationGround.convertRotationToQuaternion()))
         poseTrajectories.append(bodyPoses)
 
     if outputPath != None:
@@ -144,6 +168,8 @@ def main(argv):
     inputPath = sessionPath + motionPath
     outputPath = os.path.splitext(inputPath)[0]
     optionsDict = dict()
+
+    optionsDict["relativeTo"] = "pelvis"
 
     opts, args = getopt.getopt(argv,"im:o:",["input=","model=","output="])
     for opt, arg in opts:
