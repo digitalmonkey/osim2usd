@@ -2,6 +2,7 @@
 import math, os, sys, getopt, numpy
 import opensim as osim
 import csv
+from pyquaternion import Quaternion
 
 def saveOutputCSV(outputPath, times, outputNames, outputData):
     file = open(outputPath, "w", newline='')
@@ -27,6 +28,7 @@ def saveMotionCSV(outputPath, bodyNames, times, poseTrajectories):
     file = open(outputPath, "w", newline='')
     writer = csv.writer(file)
     header = []
+
     for i in range(len(times)):
         row = []  # Row is a list of strings
 
@@ -51,14 +53,18 @@ def saveMotionCSV(outputPath, bodyNames, times, poseTrajectories):
 
             # Add rotation as quaternion
             # Have to use get() method since can't seem to use subscript to asVec4.
-            row.append(str(bodyPoses[body][1].get(0)))
-            row.append(str(bodyPoses[body][1].get(1)))
-            row.append(str(bodyPoses[body][1].get(2)))
-            row.append(str(bodyPoses[body][1].get(3)))
+            row.append(str(bodyPoses[body][1].w))
+            row.append(str(bodyPoses[body][1].x))
+            row.append(str(bodyPoses[body][1].y))
+            row.append(str(bodyPoses[body][1].z))
+
+
+
 
         if i == 0: # Write header before 1st timestamp data
             writer.writerow(header)
         writer.writerow(row)
+
     file.close()
 def mot2quats(motionPath, outputPath, modelPath, optionsDict):
 
@@ -67,24 +73,31 @@ def mot2quats(motionPath, outputPath, modelPath, optionsDict):
     model = osim.Model(modelPath)
     model.initSystem()
 
-    bodyNames = []
-    for body in model.getBodyList():
-        bodyNames.append(body.getName())
-
-    bodySet = model.getBodySet()
     motion = osim.Storage(motionPath)
     motion.setInDegrees(False)
 
     # Results  states in motionTrajectory are in SimTK:Stage:Instance
     motionTrajectory = osim.StatesTrajectory.createFromStatesStorage(model, motion, True, True)
     print("Trajectory size: ", motionTrajectory.getSize(), " is compatible: ", motionTrajectory.isCompatibleWith(model))
+    motionState = motionTrajectory.get(0)
+    model.realizePosition(motionState) # Need to do this to query positions.
+
+    bodyNames = []
+    workingBodyList = [] # Store bodies to export
+    for body in model.getBodyList():
+        # Skip body if position information is invalid.
+        testPosition = body.getPositionInGround(motionState)
+        if math.isnan(testPosition[0]) == False:
+            bodyNames.append(body.getName())
+            workingBodyList.append(body)
+
 
     poseTrajectories = []
     times = []
 
     referenceBody = None
     if "relativeTo" in optionsDict:
-        for body in model.getBodyList():
+        for body in workingBodyList:
             if body.getName() == optionsDict["relativeTo"]:
                 referenceBody = body
                 print("Making poses relative to ", referenceBody.getName())
@@ -97,8 +110,9 @@ def mot2quats(motionPath, outputPath, modelPath, optionsDict):
         invReferencePose = None
         if referenceBody != None:
 
-             invRotation: osim.Rotation = None
-             invRotation = osim.Rotation(referenceBody.getRotationInGround(motionState).invert())
+             referenceRotation = referenceBody.getRotationInGround(motionState).convertRotationToQuaternion()
+             referenceQuat = Quaternion(referenceRotation.get(0), referenceRotation.get(1), referenceRotation.get(2), referenceRotation.get(3))
+             invRotation = referenceQuat.inverse
              invPosition = referenceBody.getPositionInGround(motionState)
              invPosition[0] = -1.0 * invPosition[0]
              invPosition[1] = -1.0 * invPosition[1]
@@ -107,15 +121,16 @@ def mot2quats(motionPath, outputPath, modelPath, optionsDict):
 
         # Loop through bodies in model.
         bodyPoses = []
-        for body in model.getBodyList():
+        for body in workingBodyList:
             positionGround = body.getPositionInGround(motionState)
-            rotationGround = body.getRotationInGround(motionState)
+            rotationGround = body.getRotationInGround(motionState).convertRotationToQuaternion()
+            bodyQuat = Quaternion(rotationGround.get(0), rotationGround.get(1), rotationGround.get(2), rotationGround.get(3))
             if invReferencePose: # Make pose relative to the reference pose
                  positionGround[0] = positionGround[0] + invReferencePose[0][0]
                  positionGround[1] = positionGround[1] + invReferencePose[0][1]
                  positionGround[2] = positionGround[2] + invReferencePose[0][2]
-                 rotationGround *= invReferencePose[1]
-            bodyPoses.append((positionGround, rotationGround.convertRotationToQuaternion()))
+                 rotationGround = invReferencePose[1] * bodyQuat
+            bodyPoses.append((positionGround, rotationGround))
         poseTrajectories.append(bodyPoses)
 
     if outputPath != None:
