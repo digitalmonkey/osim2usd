@@ -29,6 +29,7 @@ def saveMotionCSV(outputPath, bodyNames, times, poseTrajectories):
     writer = csv.writer(file)
     header = []
 
+    lastBodyPoses = []
     for i in range(len(times)):
         row = []  # Row is a list of strings
 
@@ -38,6 +39,7 @@ def saveMotionCSV(outputPath, bodyNames, times, poseTrajectories):
         bodyPoses = poseTrajectories[i]
         for body in range(len(bodyPoses)):
             if i == 0: # Add header info
+                lastBodyPoses.append(Quaternion())
                 header.append(bodyNames[body] + "_x")
                 header.append(bodyNames[body] + "_y")
                 header.append(bodyNames[body] + "_z")
@@ -52,11 +54,27 @@ def saveMotionCSV(outputPath, bodyNames, times, poseTrajectories):
             row.append(str(bodyPoses[body][0][2]))
 
             # Add rotation as quaternion
-            # Have to use get() method since can't seem to use subscript to asVec4.
-            row.append(str(bodyPoses[body][1].w))
-            row.append(str(bodyPoses[body][1].x))
-            row.append(str(bodyPoses[body][1].y))
-            row.append(str(bodyPoses[body][1].z))
+            # Check Euclidean distance with previous timestep and select antipodal quaternion that minimizes the distance
+            # Better continuity of the orientation trajectory makes learning easier
+            lastQuat = lastBodyPoses[body]
+            currentQuat = bodyPoses[body][1]
+            negCurrentQuat = -bodyPoses[body][1]
+            distQ = math.sqrt(pow(currentQuat.w-lastQuat.w, 2.0) + pow(currentQuat.x-lastQuat.x, 2.0) + pow(currentQuat.y-lastQuat.y, 2.0) + pow(currentQuat.z-lastQuat.z, 2.0))
+            negDistQ = math.sqrt(pow(negCurrentQuat.w-lastQuat.w, 2.0) + pow(negCurrentQuat.x-lastQuat.x, 2.0) + pow(negCurrentQuat.y-lastQuat.y, 2.0) + pow(negCurrentQuat.z-lastQuat.z, 2.0))
+            chosenQuat = currentQuat
+            if negDistQ < distQ:
+                chosenQuat = negCurrentQuat
+
+            lastBodyPoses[body] = chosenQuat # Store the chosen quaternion this timestep to compare next frame
+
+            # Uncomment to test trajectory for a specific bone
+            # if bodyNames[body] == "ulna_r":
+            #    print("Body ", bodyNames[body], " last: ", lastQuat, "choice1: ", currentQuat, " choice2: ", negCurrentQuat, " selected: ", chosenQuat)
+
+            row.append(str(chosenQuat.w))
+            row.append(str(chosenQuat.x))
+            row.append(str(chosenQuat.y))
+            row.append(str(chosenQuat.z))
 
 
 
