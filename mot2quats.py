@@ -3,6 +3,63 @@ import math, os, sys, getopt, numpy
 import opensim as osim
 import csv
 
+def saveOutputCSV(outputPath, times, outputNames, outputData):
+    file = open(outputPath, "w", newline='')
+    writer = csv.writer(file)
+    header = []
+
+    for i in range(len(times)):
+        row = []
+
+        if i == 0: # Write header
+            header.append("time")
+            for label in outputNames:
+                header.append(label)
+            writer.writerow(header)
+
+        row.append(str(times[i]))
+        for data in outputData[i]:
+            row.append(str(data))
+        writer.writerow(row)
+
+    file.close()
+def saveMotionCSV(outputPath, bodyNames, times, poseTrajectories):
+    file = open(outputPath, "w", newline='')
+    writer = csv.writer(file)
+    header = []
+    for i in range(len(times)):
+        row = []  # Row is a list of strings
+
+        if i == 0:
+            header.append("time")
+        row.append(str(times[i]))
+        bodyPoses = poseTrajectories[i]
+        for body in range(len(bodyPoses)):
+            if i == 0: # Add header info
+                header.append(bodyNames[body] + "_x")
+                header.append(bodyNames[body] + "_y")
+                header.append(bodyNames[body] + "_z")
+                header.append(bodyNames[body] + "_qw")
+                header.append(bodyNames[body] + "_qx")
+                header.append(bodyNames[body] + "_qy")
+                header.append(bodyNames[body] + "_qz")
+
+            # Add position
+            row.append(str(bodyPoses[body][0][0]))
+            row.append(str(bodyPoses[body][0][1]))
+            row.append(str(bodyPoses[body][0][2]))
+
+            # Add rotation as quaternion
+            # Have to use get() method since can't seem to use subscript to asVec4.
+            row.append(str(bodyPoses[body][1].get(0)))
+            row.append(str(bodyPoses[body][1].get(1)))
+            row.append(str(bodyPoses[body][1].get(2)))
+            row.append(str(bodyPoses[body][1].get(3)))
+
+        if i == 0: # Write header before 1st timestamp data
+            writer.writerow(header)
+        writer.writerow(row)
+    file.close()
 def mot2quats(motionPath, outputPath, modelPath, optionsDict):
 
     print(f"Input OpenSim motion path set to: {motionPath}")
@@ -22,7 +79,7 @@ def mot2quats(motionPath, outputPath, modelPath, optionsDict):
     motionTrajectory = osim.StatesTrajectory.createFromStatesStorage(model, motion, True, True)
     print("Trajectory size: ", motionTrajectory.getSize(), " is compatible: ", motionTrajectory.isCompatibleWith(model))
 
-    poseTrajectory = []
+    poseTrajectories = []
     times = []
     for i in range(motionTrajectory.getSize()):
         motionState = motionTrajectory.get(i)
@@ -33,23 +90,48 @@ def mot2quats(motionPath, outputPath, modelPath, optionsDict):
         bodyPoses = []
         for body in model.getBodyList():
             positionGround = body.getPositionInGround(motionState)
-            rotationGround = body.getRotationInGround(motionState)
+            rotationGround = body.getRotationInGround(motionState).convertRotationToQuaternion()
             bodyPoses.append((positionGround, rotationGround))
-        poseTrajectory.append(bodyPoses)
-    print("Created motion trajectory: ", len(times), "samples.")
+        poseTrajectories.append(bodyPoses)
 
     if outputPath != None:
-        file = open(outputPath, "w", newline='')
-        writer = csv.writer(file)
-        writer.writerow(bodyNames)
+        saveMotionCSV(outputPath + "_motion.csv", bodyNames, times, poseTrajectories)
+
+        outputNames = []
+        for force in model.getForceSet():
+            outputNames.append(force.getName())
+
+        outputData = []
+
+        # Filter out activations only.
+        names = model.getStateVariableNames()
+        activationLabels = []
+        for j in range(names.getSize()):
+            if "/activation" in names.get(j):
+                activationLabels.append(names.get(j))
+
+        print(f"Found {len(activationLabels)} activation state variables for output.")
+
+        outputNames = []
         for i in range(len(times)):
-            row = str(times[i])
-            print(f"Time: {row}")
-            writer.writerow(row)
-        file.close()
+            sample = []
+            state = motionTrajectory.get(i)
+            model.realizeVelocity(state)
+
+            for label in activationLabels:
+                if i == 0:
+                   muscleLabel = label.replace("/activation","")
+                   muscleLabel = muscleLabel.replace("/forceset/","")
+                   outputNames.append(muscleLabel)
+                activation = model.getStateVariableValue(state, label)
+                sample.append(str(activation))
+            outputData.append(sample)
+
+        saveOutputCSV(outputPath + "_output.csv", times, outputNames, outputData)
 
 
-    return (bodyNames, times, poseTrajectory)
+
+    return (bodyNames, times, poseTrajectories)
 
 
 def main(argv):
@@ -60,7 +142,7 @@ def main(argv):
     modelPath = "./Model/LaiArnoldModified2017_poly_withArms_weldHand_scaled_adjusted.osim"
     motionPath = "./Motions/kinematics_activations_left_leg_squat_0.mot"
     inputPath = sessionPath + motionPath
-    outputPath = os.path.splitext(inputPath)[0] + ".csv"
+    outputPath = os.path.splitext(inputPath)[0]
     optionsDict = dict()
 
     opts, args = getopt.getopt(argv,"im:o:",["input=","model=","output="])
