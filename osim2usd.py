@@ -11,9 +11,11 @@ import opensim as osim
 from pxr import Sdf, Gf, Usd, UsdGeom, UsdSkel, Vt
 
 # For vtk support (reading vtp geometry)
-import numpy as np
 import vtk
 from vtk.util.numpy_support import vtk_to_numpy
+
+# For mot file support
+from mot2quats import mot2quats
 
 class Function:
     def __init__(self, name):
@@ -180,11 +182,59 @@ def getMeshArrays(meshPath):
 
     return (faceVertexCounts, faceVertexIndices, points)
 
+def writeUSDAnimations(stage, skeleton, animations):
+    # Build a snapshot to query
+    skeletonCache = UsdSkel.Cache()
+    skeletonQuery = skeletonCache.GetSkelQuery(skeleton)
+    skeletonPath = skeleton.GetPrim().GetPath()
 
+    for animation in animations:
+        (motionName, motionPoses) = animation
+        print("\tAnimation: ", motionName)
+        #animNode = UsdSkel.Animation.Define(stage, skeletonPath.AppendChild(motionName))
+        animNode = UsdSkel.Animation.Define(stage, Sdf.Path("/"+motionName))
 
-def writeUsd(parseTree, usdPath, geomPath, optionsDict):
+        binding = UsdSkel.BindingAPI.Apply(skeleton.GetPrim())
+
+        # May not be needed if have multiple anims
+        binding.CreateSkeletonRel().SetTargets([animNode.GetPrim().GetPath()])
+
+        # The ordered set of Joint objects of an imaginary application.
+        joints = []
+        # GetTopology() returns a UsdSkel.Topology object, which describes
+        # the parent<->child relationships. It also gives the number of joints.
+        topology = skeletonQuery.GetTopology()
+        numJoints = len(topology)
+        jointOrder = skeletonQuery.GetJointOrder()
+
+        # Build up the joint attributes list based on contents of bodyNames
+        (bodyNames, times, poseTrajectories) = motionPoses
+        print(bodyNames)
+        jointPaths = []
+        for i in range(numJoints):
+            jointPath = Sdf.Path(jointOrder[i])
+            name = jointPath.name
+            if name in bodyNames:
+                jointPaths.append(jointPath)
+            parent = topology.GetParent(i)
+
+        jointTokens = Vt.TokenArray([jointPath.pathString for jointPath in jointPaths])
+        animNode.GetJointsAttr().Set(jointTokens)
+        rotationsAttr = animNode.CreateRotationsAttr()
+
+        for i, time in enumerate(times):
+            bodyposes = poseTrajectories[i]
+            quats = []
+            for bodypose in bodyposes:
+                rotation = bodypose[1]
+                quats.append(Gf.Quatf(rotation.w, rotation.x, rotation.y, rotation.z))
+            jointQuats = Vt.QuatfArray(quats)
+
+def writeUsd(parseTree, usdPath, geomPath, animations, optionsDict):
     root = parseTree.getroot()
     stage = Usd.Stage.CreateNew(usdPath)
+    UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.y)
+    stage.SetMetadata('comment', 'Generated with osim2usd.py by digitalmonkey')
 
     for model in root.findall("./Model"):
         print("Model: ", model.attrib["name"])
@@ -474,11 +524,13 @@ def writeUsd(parseTree, usdPath, geomPath, optionsDict):
                     localMarkerTransform = Gf.Matrix4d().SetIdentity().SetTranslate(localCoords)
                     geomBindAttr.Set(markerScaleTransform * markerTransform * localMarkerTransform)
 
+        if len(animations) > 0:
+            writeUSDAnimations(stage, skeleton, animations)
         stage.GetRootLayer().Save()
         stage.Export(usdPath + "a") # Save a usda file as well
         return usdPath
 
-def osim2usd(osimPath, usdPath, optionsDict):
+def osim2usd(osimPath, usdPath, animations, optionsDict):
 
     print(f"Input OpenSim model path set to: {osimPath}")
 
@@ -487,7 +539,7 @@ def osim2usd(osimPath, usdPath, optionsDict):
     print(f"Output USD scene path set to: {usdPath}")
 
     tree = xmlTree.parse(osimPath)
-    usdPath = writeUsd(tree, usdPath, geomPath, optionsDict)
+    usdPath = writeUsd(tree, usdPath, geomPath, animations, optionsDict)
 
     return usdPath
 
@@ -529,7 +581,18 @@ def main(argv):
         elif opt in ("-s", "--markerSize"):
             options["markerSize"] = float(arg)
 
-    usdPath = osim2usd(inputPath, outputPath, optionsDict)
+    motionFiles = [
+        "./Motions/kinematics_activations_left_leg_squat_0.mot"
+    ]
+
+    animations = []
+    motOptionsDict = dict()
+    motOptionsDict["relativeTo"] = "pelvis"
+    for motion in motionFiles:
+        (motionName, motionPoses) = mot2quats(motion, outputPath, modelPath, motOptionsDict)
+        animations.append((motionName, motionPoses))
+
+    usdPath = osim2usd(inputPath, outputPath, animations, optionsDict)
     print(f"Saved usdPath to: {usdPath}")
 
 # Checks if running this file from a script vs. a module. Useful if planning to use this file also as a module

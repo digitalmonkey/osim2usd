@@ -2,7 +2,8 @@
 import math, os, sys, getopt, numpy
 import opensim as osim
 import csv
-from pyquaternion import Quaternion
+import numpy as np
+import quaternion
 
 def saveOutputCSV(outputPath, times, outputNames, outputData):
     file = open(outputPath, "w", newline='')
@@ -24,7 +25,7 @@ def saveOutputCSV(outputPath, times, outputNames, outputData):
         writer.writerow(row)
 
     file.close()
-def saveMotionCSV(outputPath, bodyNames, times, poseTrajectories):
+def saveMotionCSV(outputPath, bodyNames, times, poseTrajectories, rotationsOnly):
     file = open(outputPath, "w", newline='')
     writer = csv.writer(file)
     header = []
@@ -39,26 +40,30 @@ def saveMotionCSV(outputPath, bodyNames, times, poseTrajectories):
         bodyPoses = poseTrajectories[i]
         for body in range(len(bodyPoses)):
             if i == 0: # Add header info
-                lastBodyPoses.append(Quaternion())
-                header.append(bodyNames[body] + "_x")
-                header.append(bodyNames[body] + "_y")
-                header.append(bodyNames[body] + "_z")
+                lastBodyPoses.append(np.quaternion())
+                if rotationsOnly == False:
+                    header.append(bodyNames[body] + "_x")
+                    header.append(bodyNames[body] + "_y")
+                    header.append(bodyNames[body] + "_z")
                 header.append(bodyNames[body] + "_qw")
                 header.append(bodyNames[body] + "_qx")
                 header.append(bodyNames[body] + "_qy")
                 header.append(bodyNames[body] + "_qz")
 
             # Add position
-            row.append(str(bodyPoses[body][0][0]))
-            row.append(str(bodyPoses[body][0][1]))
-            row.append(str(bodyPoses[body][0][2]))
+            if rotationsOnly == False:
+                row.append(str(bodyPoses[body][0][0]))
+                row.append(str(bodyPoses[body][0][1]))
+                row.append(str(bodyPoses[body][0][2]))
 
             # Add rotation as quaternion
             # Check Euclidean distance with previous timestep and select antipodal quaternion that minimizes the distance
             # Better continuity of the orientation trajectory makes learning easier
             lastQuat = lastBodyPoses[body]
             currentQuat = bodyPoses[body][1]
-            negCurrentQuat = -bodyPoses[body][1]
+            testA = lastQuat.w
+            testW = currentQuat.w
+            negCurrentQuat = -currentQuat
             distQ = math.sqrt(pow(currentQuat.w-lastQuat.w, 2.0) + pow(currentQuat.x-lastQuat.x, 2.0) + pow(currentQuat.y-lastQuat.y, 2.0) + pow(currentQuat.z-lastQuat.z, 2.0))
             negDistQ = math.sqrt(pow(negCurrentQuat.w-lastQuat.w, 2.0) + pow(negCurrentQuat.x-lastQuat.x, 2.0) + pow(negCurrentQuat.y-lastQuat.y, 2.0) + pow(negCurrentQuat.z-lastQuat.z, 2.0))
             chosenQuat = currentQuat
@@ -76,9 +81,6 @@ def saveMotionCSV(outputPath, bodyNames, times, poseTrajectories):
             row.append(str(chosenQuat.y))
             row.append(str(chosenQuat.z))
 
-
-
-
         if i == 0: # Write header before 1st timestamp data
             writer.writerow(header)
         writer.writerow(row)
@@ -93,6 +95,8 @@ def mot2quats(motionPath, outputPath, modelPath, optionsDict):
 
     motion = osim.Storage(motionPath)
     motion.setInDegrees(False)
+    motionName = os.path.splitext(os.path.basename(motionPath))[0]
+    print (f"Motion name: {motionName}")
 
     # Results  states in motionTrajectory are in SimTK:Stage:Instance
     motionTrajectory = osim.StatesTrajectory.createFromStatesStorage(model, motion, True, True)
@@ -129,8 +133,8 @@ def mot2quats(motionPath, outputPath, modelPath, optionsDict):
         if referenceBody != None:
 
              referenceRotation = referenceBody.getRotationInGround(motionState).convertRotationToQuaternion()
-             referenceQuat = Quaternion(referenceRotation.get(0), referenceRotation.get(1), referenceRotation.get(2), referenceRotation.get(3))
-             invRotation = referenceQuat.inverse
+             referenceQuat = np.quaternion(referenceRotation.get(0), referenceRotation.get(1), referenceRotation.get(2), referenceRotation.get(3))
+             invRotation = referenceQuat.conjugate() # Same as quaternion inverse
              invPosition = referenceBody.getPositionInGround(motionState)
              invPosition[0] = -1.0 * invPosition[0]
              invPosition[1] = -1.0 * invPosition[1]
@@ -142,17 +146,18 @@ def mot2quats(motionPath, outputPath, modelPath, optionsDict):
         for body in workingBodyList:
             positionGround = body.getPositionInGround(motionState)
             rotationGround = body.getRotationInGround(motionState).convertRotationToQuaternion()
-            bodyQuat = Quaternion(rotationGround.get(0), rotationGround.get(1), rotationGround.get(2), rotationGround.get(3))
+            # Convert the OpenSim quaternion to the numpy quaternion which has more useful attributes.
+            bodyQuat = np.quaternion(rotationGround.get(0), rotationGround.get(1), rotationGround.get(2), rotationGround.get(3))
             if invReferencePose: # Make pose relative to the reference pose
                  positionGround[0] = positionGround[0] + invReferencePose[0][0]
                  positionGround[1] = positionGround[1] + invReferencePose[0][1]
                  positionGround[2] = positionGround[2] + invReferencePose[0][2]
-                 rotationGround = invReferencePose[1] * bodyQuat
-            bodyPoses.append((positionGround, rotationGround))
+                 bodyQuat = invReferencePose[1] * bodyQuat
+            bodyPoses.append((positionGround, bodyQuat))
         poseTrajectories.append(bodyPoses)
 
     if outputPath != None:
-        saveMotionCSV(outputPath + "_motion.csv", bodyNames, times, poseTrajectories)
+        saveMotionCSV(outputPath + "_motion.csv", bodyNames, times, poseTrajectories, True)
 
         outputNames = []
         for force in model.getForceSet():
@@ -188,7 +193,7 @@ def mot2quats(motionPath, outputPath, modelPath, optionsDict):
 
 
 
-    return (bodyNames, times, poseTrajectories)
+    return motionName, (bodyNames, times, poseTrajectories)
 
 
 def main(argv):
@@ -216,7 +221,7 @@ def main(argv):
         elif opt in ("-m", "--model"):
             modelPath = arg
 
-    bodyPoseTrajectories = mot2quats(inputPath, outputPath, modelPath, optionsDict)
+    (name, bodyPoseTrajectories) = mot2quats(inputPath, outputPath, modelPath, optionsDict)
 
 # Checks if running this file from a script vs. a module. Useful if planning to use this file also as a module
 # to incorporate into other scripts.
