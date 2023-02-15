@@ -141,8 +141,7 @@ def mot2quats(motionPath, outputPath, jointParents, modelPath, optionsDict):
 
     for dof in columnsInDegrees:
         dofIndex = motion.getStateIndex(dof)
-        #motion.multiplyColumn(dofIndex, math.pi/180.0) # Convert to radians.
-        motion.multiplyColumn(dofIndex, 0.0) # Convert to radians.
+        motion.multiplyColumn(dofIndex, math.pi/180.0) # Convert to radians.
 
     # Edit storage so angles are in radians.
     motion.setInDegrees(False)
@@ -189,18 +188,12 @@ def mot2quats(motionPath, outputPath, jointParents, modelPath, optionsDict):
         # Loop through bodies in model.
         bodyPoses = []
         for (name, body, joint) in workingBodyList:
-            jointChildFrame = joint.getChildFrame()
-            jointInboardQuat = jointChildFrame.getRotationInGround(motionState).convertRotationToQuaternion()
-            jointInboardRot = np.quaternion(jointInboardQuat.get(0), jointInboardQuat.get(1), jointInboardQuat.get(2), jointInboardQuat.get(3))
-
             positionGround = body.getPositionInGround(motionState)
             rotationGround = body.getRotationInGround(motionState)
             # Convert the OpenSim quaternion to the numpy quaternion which has more useful attributes.
             localPosition = positionGround
             bodyQuat = rotationGround.convertRotationToQuaternion()
             localRotation = np.quaternion(bodyQuat.get(0), bodyQuat.get(1), bodyQuat.get(2), bodyQuat.get(3))
-            inboardRotationBody = localRotation.conjugate() * jointInboardRot
-            inboardRotationBody = inboardRotationBody.conjugate()
 
             if "localRotations" in optionsDict:
                 if optionsDict["localRotations"]:
@@ -214,13 +207,12 @@ def mot2quats(motionPath, outputPath, jointParents, modelPath, optionsDict):
                         parentPosition = parentBody.getPositionInGround(motionState)
                         parentQuat = parentRotationGround.convertRotationToQuaternion()
                         parentRotation = np.quaternion(parentQuat.get(0), parentQuat.get(1), parentQuat.get(2), parentQuat.get(3))
-                        #localRotation = parentRotation.conjugate() * localRotation
-                        localRotation = parentRotation.conjugate() * localRotation * inboardRotationBody
+                        localRotation = parentRotation.conjugate() * localRotation
                         localPosition[0] = positionGround[0] - parentPosition[0]
                         localPosition[1] = positionGround[1] - parentPosition[1]
                         localPosition[2] = positionGround[2] - parentPosition[2]
-                        print("Finished parent: ", parentName)
 
+            # TODO: We have not really tested the output positions. Try offer a transform wrt root output mode for usd animations.
             bodyPoses.append((localPosition, localRotation))
         poseTrajectories.append(bodyPoses)
 
