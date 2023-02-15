@@ -406,7 +406,6 @@ def writeUsd(parseTree, usdPath, geomPath, osimPath, animationFolder, motionFile
             # Find inboard offset joint and use to adjust bone geometry reference frame.
             parentJointSkelSpaceTransform = Gf.Matrix4d(orientation, translation)
 
-            # TEST
             (inboardTranslation, inboardOrientation) = bodyJointOffsetDict[childBody]
             inboardTransform = Gf.Matrix4d(inboardOrientation, inboardTranslation)
             invInboardTransform = inboardTransform.GetInverse()
@@ -414,13 +413,10 @@ def writeUsd(parseTree, usdPath, geomPath, osimPath, animationFolder, motionFile
             if parentBody != "ground":
                 (parentInboardTranslation, parentInboardOrientation) = bodyJointOffsetDict[parentBody]
                 parentInboardTransform = Gf.Matrix4d(parentInboardOrientation, parentInboardTranslation)
-            # END TEST
 
-            # ORIG bindTransform = localSpatialTransform * parentJointSkelSpaceTransform * invParentOffsetTransform * parentSkelSpaceTransform
             bindTransform = invInboardTransform * localSpatialTransform * parentJointSkelSpaceTransform * invParentOffsetTransform * parentInboardTransform * parentSkelSpaceTransform
             bindTransforms.append(bindTransform)
 
-            # ORIG restTransform = localSpatialTransform * parentJointSkelSpaceTransform * invParentOffsetTransform
             restTransform = invInboardTransform * localSpatialTransform * parentJointSkelSpaceTransform * invParentOffsetTransform * parentInboardTransform
             restTransforms.append(restTransform)
 
@@ -452,11 +448,8 @@ def writeUsd(parseTree, usdPath, geomPath, osimPath, animationFolder, motionFile
             binding.SetRigidJointInfluence(bodyIndex, 1.0)
 
             # Set up geometry transform for binding
-            #ORIG (inboardTranslation, inboardOrientation) = bodyJointOffsetDict[body]
-            #ORIGinvInboardTransform = Gf.Matrix4d(inboardOrientation, inboardTranslation).GetInverse()
             geomBindAttr = binding.CreateGeomBindTransformAttr()
             scaleTransform = Gf.Matrix4d().GetInverse().SetScale(scalefactors)
-            # ORIG geomBindAttr.Set(scaleTransform * invInboardTransform * bindTransformsDict[body])
             geomBindAttr.Set(scaleTransform * bindTransformsDict[body])
 
         # Adjust geometry binding transform to take into account inboard translations
