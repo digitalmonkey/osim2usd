@@ -182,7 +182,8 @@ def getMeshArrays(meshPath):
 
     return (faceVertexCounts, faceVertexIndices, points)
 
-def writeUSDAnimations(stage, skeleton, animations):
+def writeUSDAnimations(stage, skeleton, modelPath, animationFolder, animations):
+    print("Writing USD Animations...")
     # Build a snapshot to query
     skeletonCache = UsdSkel.Cache()
     skeletonQuery = skeletonCache.GetSkelQuery(skeleton)
@@ -191,16 +192,21 @@ def writeUSDAnimations(stage, skeleton, animations):
     for animation in animations:
         (motionName, motionPoses) = animation
         print("\tAnimation: ", motionName)
-        #animNode = UsdSkel.Animation.Define(stage, skeletonPath.AppendChild(motionName))
-        animNode = UsdSkel.Animation.Define(stage, Sdf.Path("/"+motionName))
 
-        binding = UsdSkel.BindingAPI.Apply(skeleton.GetPrim())
+        animFileBaseName = animationFolder + "/" + motionName
+        animStage = Usd.Stage.CreateNew(animFileBaseName + ".usd")
+        UsdGeom.SetStageUpAxis(animStage, UsdGeom.Tokens.y)
+
+        motionPrim = animStage.DefinePrim("/motion")
+        # motionPrim.GetReferences().AddReference(modelPath)
+
+        animStage.SetDefaultPrim(motionPrim)
+        binding = UsdSkel.BindingAPI.Apply(motionPrim)
+        animNode = UsdSkel.Animation.Define(animStage, Sdf.Path("/motion/"+motionName))
 
         # May not be needed if have multiple anims
-        binding.CreateSkeletonRel().SetTargets([animNode.GetPrim().GetPath()])
+        binding.CreateAnimationSourceRel().SetTargets([animNode.GetPrim().GetPath()])
 
-        # The ordered set of Joint objects of an imaginary application.
-        joints = []
         # GetTopology() returns a UsdSkel.Topology object, which describes
         # the parent<->child relationships. It also gives the number of joints.
         topology = skeletonQuery.GetTopology()
@@ -209,7 +215,10 @@ def writeUSDAnimations(stage, skeleton, animations):
 
         # Build up the joint attributes list based on contents of bodyNames
         (bodyNames, times, poseTrajectories) = motionPoses
-        print(bodyNames)
+
+        animStage.SetStartTimeCode(1)
+        animStage.SetEndTimeCode(len(times))
+
         jointPaths = []
         for i in range(numJoints):
             jointPath = Sdf.Path(jointOrder[i])
@@ -229,8 +238,15 @@ def writeUSDAnimations(stage, skeleton, animations):
                 rotation = bodypose[1]
                 quats.append(Gf.Quatf(rotation.w, rotation.x, rotation.y, rotation.z))
             jointQuats = Vt.QuatfArray(quats)
+            rotationsAttr.Set(time=i, value=jointQuats)
 
-def writeUsd(parseTree, usdPath, geomPath, animations, optionsDict):
+        # Save out animation file.
+        animStage.GetRootLayer().Save()
+        animStage.Export(animFileBaseName + ".usda")  # Save a usda file as well
+        print("Saved to: ", animFileBaseName + ".usd")
+
+
+def writeUsd(parseTree, usdPath, geomPath, osimPath, animationFolder, motionFiles, optionsDict):
     root = parseTree.getroot()
     stage = Usd.Stage.CreateNew(usdPath)
     UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.y)
@@ -389,10 +405,23 @@ def writeUsd(parseTree, usdPath, geomPath, animations, optionsDict):
             (parent, translation, orientation) = jointOffsetsFramesDict[parentFrame]
             # Find inboard offset joint and use to adjust bone geometry reference frame.
             parentJointSkelSpaceTransform = Gf.Matrix4d(orientation, translation)
-            bindTransform = localSpatialTransform * parentJointSkelSpaceTransform * invParentOffsetTransform * parentSkelSpaceTransform
+
+            # TEST
+            (inboardTranslation, inboardOrientation) = bodyJointOffsetDict[childBody]
+            inboardTransform = Gf.Matrix4d(inboardOrientation, inboardTranslation)
+            invInboardTransform = inboardTransform.GetInverse()
+            parentInboardTransform = Gf.Matrix4d().SetIdentity()
+            if parentBody != "ground":
+                (parentInboardTranslation, parentInboardOrientation) = bodyJointOffsetDict[parentBody]
+                parentInboardTransform = Gf.Matrix4d(parentInboardOrientation, parentInboardTranslation)
+            # END TEST
+
+            # ORIG bindTransform = localSpatialTransform * parentJointSkelSpaceTransform * invParentOffsetTransform * parentSkelSpaceTransform
+            bindTransform = invInboardTransform * localSpatialTransform * parentJointSkelSpaceTransform * invParentOffsetTransform * parentInboardTransform * parentSkelSpaceTransform
             bindTransforms.append(bindTransform)
 
-            restTransform = localSpatialTransform * parentJointSkelSpaceTransform * invParentOffsetTransform
+            # ORIG restTransform = localSpatialTransform * parentJointSkelSpaceTransform * invParentOffsetTransform
+            restTransform = invInboardTransform * localSpatialTransform * parentJointSkelSpaceTransform * invParentOffsetTransform * parentInboardTransform
             restTransforms.append(restTransform)
 
             bindTransformsDict[childBody] = bindTransform
@@ -423,11 +452,12 @@ def writeUsd(parseTree, usdPath, geomPath, animations, optionsDict):
             binding.SetRigidJointInfluence(bodyIndex, 1.0)
 
             # Set up geometry transform for binding
-            (inboardTranslation, inboardOrientation) = bodyJointOffsetDict[body]
-            invInboardTransform = Gf.Matrix4d(inboardOrientation, inboardTranslation).GetInverse()
+            #ORIG (inboardTranslation, inboardOrientation) = bodyJointOffsetDict[body]
+            #ORIGinvInboardTransform = Gf.Matrix4d(inboardOrientation, inboardTranslation).GetInverse()
             geomBindAttr = binding.CreateGeomBindTransformAttr()
             scaleTransform = Gf.Matrix4d().GetInverse().SetScale(scalefactors)
-            geomBindAttr.Set(scaleTransform * invInboardTransform * bindTransformsDict[body])
+            # ORIG geomBindAttr.Set(scaleTransform * invInboardTransform * bindTransformsDict[body])
+            geomBindAttr.Set(scaleTransform * bindTransformsDict[body])
 
         # Adjust geometry binding transform to take into account inboard translations
         if optionsDict["wrapObjects"] == True:
@@ -450,9 +480,6 @@ def writeUsd(parseTree, usdPath, geomPath, animations, optionsDict):
 
         # TODO: Physical properties for simulation
         # Mass, center of mass and inertia tensor data per body
-
-        # TODO: New muscle schema
-        # TODO: New wrap object schema
 
         # Parse forces (like muscles)
         if optionsDict["muscles"] == True:
@@ -524,13 +551,24 @@ def writeUsd(parseTree, usdPath, geomPath, animations, optionsDict):
                     localMarkerTransform = Gf.Matrix4d().SetIdentity().SetTranslate(localCoords)
                     geomBindAttr.Set(markerScaleTransform * markerTransform * localMarkerTransform)
 
-        if len(animations) > 0:
-            writeUSDAnimations(stage, skeleton, animations)
+
         stage.GetRootLayer().Save()
         stage.Export(usdPath + "a") # Save a usda file as well
+
+        # Save out animations into separate usd files.
+        animations = []
+        motOptionsDict = dict()
+        # motOptionsDict["relativeTo"] = "pelvis"
+        motOptionsDict["localRotations"] = True
+        for motion in motionFiles:
+            (motionName, motionPoses) = mot2quats(motion, usdPath, jointParents, osimPath, motOptionsDict)
+            animations.append((motionName, motionPoses))
+
+        if len(animations) > 0:
+            writeUSDAnimations(stage, skeleton, usdPath, animationFolder, animations)
         return usdPath
 
-def osim2usd(osimPath, usdPath, animations, optionsDict):
+def osim2usd(osimPath, usdPath, animationFolder, animations, optionsDict):
 
     print(f"Input OpenSim model path set to: {osimPath}")
 
@@ -539,7 +577,7 @@ def osim2usd(osimPath, usdPath, animations, optionsDict):
     print(f"Output USD scene path set to: {usdPath}")
 
     tree = xmlTree.parse(osimPath)
-    usdPath = writeUsd(tree, usdPath, geomPath, animations, optionsDict)
+    usdPath = writeUsd(tree, usdPath, geomPath, osimPath, animationFolder, animations, optionsDict)
 
     return usdPath
 
@@ -550,14 +588,15 @@ def main(argv):
     sessionPath=""
     modelPath = "./Model/LaiArnoldModified2017_poly_withArms_weldHand_scaled_adjusted.osim"
     inputPath = sessionPath + modelPath
+    motionPath = "./Model"
     outputPath = os.path.splitext(inputPath)[0] + ".usd"
     optionsDict = dict()
     optionsDict["markerSpheres"] = False
-    optionsDict["exportMarkers"]  = True
+    optionsDict["exportMarkers"]  = False
     optionsDict["markerSize"] = 0.01
-    optionsDict["jointNames"] = False
-    optionsDict["wrapObjects"] = True
-    optionsDict["muscles"] = True
+    optionsDict["jointNames"] = True
+    optionsDict["wrapObjects"] = False
+    optionsDict["muscles"] = False
 
     opts, args = getopt.getopt(argv,"hi:o:",["input=","output="])
     for opt, arg in opts:
@@ -581,18 +620,12 @@ def main(argv):
         elif opt in ("-s", "--markerSize"):
             options["markerSize"] = float(arg)
 
+    motionFiles = []
     motionFiles = [
         "./Motions/kinematics_activations_left_leg_squat_0.mot"
     ]
 
-    animations = []
-    motOptionsDict = dict()
-    motOptionsDict["relativeTo"] = "pelvis"
-    for motion in motionFiles:
-        (motionName, motionPoses) = mot2quats(motion, outputPath, modelPath, motOptionsDict)
-        animations.append((motionName, motionPoses))
-
-    usdPath = osim2usd(inputPath, outputPath, animations, optionsDict)
+    usdPath = osim2usd(inputPath, outputPath, motionPath, motionFiles, optionsDict)
     print(f"Saved usdPath to: {usdPath}")
 
 # Checks if running this file from a script vs. a module. Useful if planning to use this file also as a module

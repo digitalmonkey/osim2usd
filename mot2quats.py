@@ -1,4 +1,8 @@
 # For OpenSim support
+from colorama import init as colorama_init
+from colorama import Fore
+from colorama import Style
+
 import math, os, sys, getopt, numpy
 import opensim as osim
 import csv
@@ -86,15 +90,63 @@ def saveMotionCSV(outputPath, bodyNames, times, poseTrajectories, rotationsOnly)
         writer.writerow(row)
 
     file.close()
-def mot2quats(motionPath, outputPath, modelPath, optionsDict):
+def mot2quats(motionPath, outputPath, jointParents, modelPath, optionsDict):
 
     print(f"Input OpenSim motion path set to: {motionPath}")
 
     model = osim.Model(modelPath)
     model.initSystem()
 
+    # Doesn't work - throws an exception.
+    # model.setUseVisualizer(True)
+
+
     motion = osim.Storage(motionPath)
+    if motion.isInDegrees:
+        print(f"{Fore.LIGHTYELLOW_EX}Warning: Motion set is in degrees. Radians are required.{Style.RESET_ALL}")
+
+    # TODO: Convert all degree columns to radians.
+    columnsInDegrees = [
+        "pelvis_tilt",
+        "pelvis_list",
+        "pelvis_rotation",
+        "hip_flexion_l",
+        "hip_adduction_l",
+        "hip_rotation_l",
+        "hip_flexion_r",
+        "hip_adduction_r",
+        "hip_rotation_r",
+        "knee_angle_l",
+        "knee_angle_r",
+        "ankle_angle_l",
+        "ankle_angle_r",
+        "subtalar_angle_l",
+        "subtalar_angle_r",
+        "mtp_angle_l",
+        "mtp_angle_r",
+        "lumbar_extension",
+        "lumbar_bending",
+        "lumbar_rotation",
+        "arm_flex_l",
+        "arm_add_l",
+        "arm_rot_l",
+        "arm_flex_r",
+        "arm_add_r",
+        "arm_rot_r",
+        "elbow_flex_l",
+        "elbow_flex_r",
+        "pro_sup_l",
+        "pro_sup_r"
+    ]
+
+    for dof in columnsInDegrees:
+        dofIndex = motion.getStateIndex(dof)
+        #motion.multiplyColumn(dofIndex, math.pi/180.0) # Convert to radians.
+        motion.multiplyColumn(dofIndex, 0.0) # Convert to radians.
+
+    # Edit storage so angles are in radians.
     motion.setInDegrees(False)
+
     motionName = os.path.splitext(os.path.basename(motionPath))[0]
     print (f"Motion name: {motionName}")
 
@@ -104,56 +156,72 @@ def mot2quats(motionPath, outputPath, modelPath, optionsDict):
     motionState = motionTrajectory.get(0)
     model.realizePosition(motionState) # Need to do this to query positions.
 
-    bodyNames = []
-    workingBodyList = [] # Store bodies to export
-    for body in model.getBodyList():
-        # Skip body if position information is invalid.
-        testPosition = body.getPositionInGround(motionState)
-        if math.isnan(testPosition[0]) == False:
-            bodyNames.append(body.getName())
-            workingBodyList.append(body)
 
+    jointList = model.getJointList()  # Get the Model's BodyList
+    jointIter = jointList.begin()  # Start the iterator at the beginning of the list
+
+    bodyList = model.getBodyList()
+    bodyIter = bodyList.begin()
+
+    assert(model.getNumBodies() == model.getNumJoints())
+
+    workingBodyDict = dict()
+    bodyNames= []
+    workingBodyList = []
+    while jointIter != jointList.end(): # Stay in the loop until the iterator reaches the end of the list
+        workingBodyList.append((bodyIter.getName(), bodyIter.deref(), jointIter.deref()))
+        workingBodyDict[bodyIter.getName()] = (bodyIter.deref(), jointIter.deref())
+        bodyNames.append(bodyIter.getName())
+        jointIter.next()
+        bodyIter.next()
 
     poseTrajectories = []
     times = []
 
-    referenceBody = None
-    if "relativeTo" in optionsDict:
-        for body in workingBodyList:
-            if body.getName() == optionsDict["relativeTo"]:
-                referenceBody = body
-                print("Making poses relative to ", referenceBody.getName())
-
+    print("Saving out motion frames...")
     for i in range(motionTrajectory.getSize()):
         motionState = motionTrajectory.get(i)
         model.realizePosition(motionState)
         times.append(motionState.getTime())
 
         invReferencePose = None
-        if referenceBody != None:
-
-             referenceRotation = referenceBody.getRotationInGround(motionState).convertRotationToQuaternion()
-             referenceQuat = np.quaternion(referenceRotation.get(0), referenceRotation.get(1), referenceRotation.get(2), referenceRotation.get(3))
-             invRotation = referenceQuat.conjugate() # Same as quaternion inverse
-             invPosition = referenceBody.getPositionInGround(motionState)
-             invPosition[0] = -1.0 * invPosition[0]
-             invPosition[1] = -1.0 * invPosition[1]
-             invPosition[2] = -1.0 * invPosition[2]
-             invReferencePose = (invPosition, invRotation)
 
         # Loop through bodies in model.
         bodyPoses = []
-        for body in workingBodyList:
+        for (name, body, joint) in workingBodyList:
+            jointChildFrame = joint.getChildFrame()
+            jointInboardQuat = jointChildFrame.getRotationInGround(motionState).convertRotationToQuaternion()
+            jointInboardRot = np.quaternion(jointInboardQuat.get(0), jointInboardQuat.get(1), jointInboardQuat.get(2), jointInboardQuat.get(3))
+
             positionGround = body.getPositionInGround(motionState)
-            rotationGround = body.getRotationInGround(motionState).convertRotationToQuaternion()
+            rotationGround = body.getRotationInGround(motionState)
             # Convert the OpenSim quaternion to the numpy quaternion which has more useful attributes.
-            bodyQuat = np.quaternion(rotationGround.get(0), rotationGround.get(1), rotationGround.get(2), rotationGround.get(3))
-            if invReferencePose: # Make pose relative to the reference pose
-                 positionGround[0] = positionGround[0] + invReferencePose[0][0]
-                 positionGround[1] = positionGround[1] + invReferencePose[0][1]
-                 positionGround[2] = positionGround[2] + invReferencePose[0][2]
-                 bodyQuat = invReferencePose[1] * bodyQuat
-            bodyPoses.append((positionGround, bodyQuat))
+            localPosition = positionGround
+            bodyQuat = rotationGround.convertRotationToQuaternion()
+            localRotation = np.quaternion(bodyQuat.get(0), bodyQuat.get(1), bodyQuat.get(2), bodyQuat.get(3))
+            inboardRotationBody = localRotation.conjugate() * jointInboardRot
+            inboardRotationBody = inboardRotationBody.conjugate()
+
+            if "localRotations" in optionsDict:
+                if optionsDict["localRotations"]:
+                    # Find parent of body
+                    parentName = jointParents[name]
+                    if parentName != "ground":
+                        (parentBody, parentJoint) = workingBodyDict[jointParents[name]]
+                        parentJointParentFrame = parentJoint.getParentFrame()
+                        parentJointChildFrame = parentJoint.getChildFrame()
+                        parentRotationGround = parentBody.getRotationInGround(motionState)
+                        parentPosition = parentBody.getPositionInGround(motionState)
+                        parentQuat = parentRotationGround.convertRotationToQuaternion()
+                        parentRotation = np.quaternion(parentQuat.get(0), parentQuat.get(1), parentQuat.get(2), parentQuat.get(3))
+                        #localRotation = parentRotation.conjugate() * localRotation
+                        localRotation = parentRotation.conjugate() * localRotation * inboardRotationBody
+                        localPosition[0] = positionGround[0] - parentPosition[0]
+                        localPosition[1] = positionGround[1] - parentPosition[1]
+                        localPosition[2] = positionGround[2] - parentPosition[2]
+                        print("Finished parent: ", parentName)
+
+            bodyPoses.append((localPosition, localRotation))
         poseTrajectories.append(bodyPoses)
 
     if outputPath != None:
@@ -207,7 +275,7 @@ def main(argv):
     outputPath = os.path.splitext(inputPath)[0]
     optionsDict = dict()
 
-    optionsDict["relativeTo"] = "pelvis"
+    optionsDict["localRotations"] = True
 
     opts, args = getopt.getopt(argv,"im:o:",["input=","model=","output="])
     for opt, arg in opts:
@@ -221,7 +289,7 @@ def main(argv):
         elif opt in ("-m", "--model"):
             modelPath = arg
 
-    (name, bodyPoseTrajectories) = mot2quats(inputPath, outputPath, modelPath, optionsDict)
+    (name, bodyPoseTrajectories) = mot2quats(inputPath, outputPath, None, modelPath, optionsDict)
 
 # Checks if running this file from a script vs. a module. Useful if planning to use this file also as a module
 # to incorporate into other scripts.
