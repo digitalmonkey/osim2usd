@@ -561,8 +561,11 @@ def osim2usd(osimPath, motionFiles, optionsDict):
     tree = xmlTree.parse(osimPath)
     usdPath = writeUsd(tree, geomPath, osimPath, motionFiles, optionsDict)
 
-    print(f"Output file saved to: {usdPath}")
-    return usdPath
+    # We rename file here to move to output folder, while making sure the root layer
+    # does not reference the output folder than if we passed the full path when we create the stage.
+    newPath = optionsDict["outputFolder"] + "/" + usdPath
+    os.rename(usdPath, newPath)
+    return newPath
 
 def main(argv):
 
@@ -579,7 +582,7 @@ def main(argv):
     optionsDict["wrapObjects"] = False
     optionsDict["muscles"] = False
     optionsDict["format"] = "usda"
-    optionsDict["outputFolder"] = "."
+    optionsDict["outputFolder"] = "./Outputs"
     optionsDict["motionFormat"] = "localRotationsOnly"
 
     motionFiles = []

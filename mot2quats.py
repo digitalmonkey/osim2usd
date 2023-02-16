@@ -179,11 +179,13 @@ def mot2quats(motionPath, outputPath, jointParents, modelPath, optionsDict):
                 print(f"{Fore.LIGHTRED_EX}Error: No valid option localRotations for motion file set..{Style.RESET_ALL}")
                 quit(-1)
 
+            if math.isnan(localRotation.w) or math.isnan(localRotation.x) or math.isnan(localRotation.y) or math.isnan(localRotation.z):
+                localRotation = np.quaternion(1.0, 0.0, 0.0, 0.0) # Make identity
             bodyPoses.append((localPosition, localRotation))
         poseTrajectories.append(bodyPoses)
 
     if outputPath != None:
-        saveMotionCSV(outputPath + "_motion.csv", bodyNames, times, poseTrajectories, True)
+        saveMotionCSV(optionsDict["outputFolder"] + "/" + os.path.splitext(outputPath)[0] + "_motion.csv", bodyNames, times, poseTrajectories, True)
 
         outputNames = []
         for force in model.getForceSet():
@@ -215,7 +217,7 @@ def mot2quats(motionPath, outputPath, jointParents, modelPath, optionsDict):
                 sample.append(str(activation))
             outputData.append(sample)
 
-        saveOutputCSV(outputPath + "_output.csv", times, outputNames, outputData)
+        saveOutputCSV(optionsDict["outputFolder"] + "/" + os.path.splitext(outputPath)[0] + "_output.csv", times, outputNames, outputData)
 
 
 
