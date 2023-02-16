@@ -97,54 +97,19 @@ def mot2quats(motionPath, outputPath, jointParents, modelPath, optionsDict):
     model = osim.Model(modelPath)
     model.initSystem()
 
-    # Doesn't work - throws an exception.
-    # model.setUseVisualizer(True)
-
-
     motion = osim.Storage(motionPath)
-    if motion.isInDegrees:
+
+    if optionsDict["columnsInDegrees"]:
+        print("Convert given degree data columns to radians.")
+        for dof in optionsDict["columnsInDegrees"]:
+            print(f"Convert data {dof} to radians.")
+            dofIndex = motion.getStateIndex(dof)
+            motion.multiplyColumn(dofIndex, math.pi/180.0) # Convert to radians.
+        # Edit storage so angles are in radians.
+        motion.setInDegrees(False)
+
+    if motion.isInDegrees == True:
         print(f"{Fore.LIGHTYELLOW_EX}Warning: Motion set is in degrees. Radians are required.{Style.RESET_ALL}")
-
-    # TODO: Convert all degree columns to radians.
-    columnsInDegrees = [
-        "pelvis_tilt",
-        "pelvis_list",
-        "pelvis_rotation",
-        "hip_flexion_l",
-        "hip_adduction_l",
-        "hip_rotation_l",
-        "hip_flexion_r",
-        "hip_adduction_r",
-        "hip_rotation_r",
-        "knee_angle_l",
-        "knee_angle_r",
-        "ankle_angle_l",
-        "ankle_angle_r",
-        "subtalar_angle_l",
-        "subtalar_angle_r",
-        "mtp_angle_l",
-        "mtp_angle_r",
-        "lumbar_extension",
-        "lumbar_bending",
-        "lumbar_rotation",
-        "arm_flex_l",
-        "arm_add_l",
-        "arm_rot_l",
-        "arm_flex_r",
-        "arm_add_r",
-        "arm_rot_r",
-        "elbow_flex_l",
-        "elbow_flex_r",
-        "pro_sup_l",
-        "pro_sup_r"
-    ]
-
-    for dof in columnsInDegrees:
-        dofIndex = motion.getStateIndex(dof)
-        motion.multiplyColumn(dofIndex, math.pi/180.0) # Convert to radians.
-
-    # Edit storage so angles are in radians.
-    motion.setInDegrees(False)
 
     motionName = os.path.splitext(os.path.basename(motionPath))[0]
     print (f"Motion name: {motionName}")
@@ -154,7 +119,6 @@ def mot2quats(motionPath, outputPath, jointParents, modelPath, optionsDict):
     print("Trajectory size: ", motionTrajectory.getSize(), " is compatible: ", motionTrajectory.isCompatibleWith(model))
     motionState = motionTrajectory.get(0)
     model.realizePosition(motionState) # Need to do this to query positions.
-
 
     jointList = model.getJointList()  # Get the Model's BodyList
     jointIter = jointList.begin()  # Start the iterator at the beginning of the list
@@ -183,8 +147,6 @@ def mot2quats(motionPath, outputPath, jointParents, modelPath, optionsDict):
         model.realizePosition(motionState)
         times.append(motionState.getTime())
 
-        invReferencePose = None
-
         # Loop through bodies in model.
         bodyPoses = []
         for (name, body, joint) in workingBodyList:
@@ -195,14 +157,12 @@ def mot2quats(motionPath, outputPath, jointParents, modelPath, optionsDict):
             bodyQuat = rotationGround.convertRotationToQuaternion()
             localRotation = np.quaternion(bodyQuat.get(0), bodyQuat.get(1), bodyQuat.get(2), bodyQuat.get(3))
 
-            if "localRotations" in optionsDict:
-                if optionsDict["localRotations"]:
+            if "motionFormat" in optionsDict:
+                if optionsDict["motionFormat"] == "localRotationsOnly":
                     # Find parent of body
                     parentName = jointParents[name]
                     if parentName != "ground":
                         (parentBody, parentJoint) = workingBodyDict[jointParents[name]]
-                        parentJointParentFrame = parentJoint.getParentFrame()
-                        parentJointChildFrame = parentJoint.getChildFrame()
                         parentRotationGround = parentBody.getRotationInGround(motionState)
                         parentPosition = parentBody.getPositionInGround(motionState)
                         parentQuat = parentRotationGround.convertRotationToQuaternion()
@@ -211,8 +171,14 @@ def mot2quats(motionPath, outputPath, jointParents, modelPath, optionsDict):
                         localPosition[0] = positionGround[0] - parentPosition[0]
                         localPosition[1] = positionGround[1] - parentPosition[1]
                         localPosition[2] = positionGround[2] - parentPosition[2]
+                else:
+                    # TODO: We have not really tested the output positions. Try offer a transform wrt root output mode for usd animations.
+                    print(f"{Fore.LIGHTRED_EX}Error: Motion format is not recognized..{Style.RESET_ALL}")
+                    quit(-1)
+            else:
+                print(f"{Fore.LIGHTRED_EX}Error: No valid option localRotations for motion file set..{Style.RESET_ALL}")
+                quit(-1)
 
-            # TODO: We have not really tested the output positions. Try offer a transform wrt root output mode for usd animations.
             bodyPoses.append((localPosition, localRotation))
         poseTrajectories.append(bodyPoses)
 

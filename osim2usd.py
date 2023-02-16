@@ -100,8 +100,6 @@ class SpatialTransform:
 
     def __init__(self, joint):
         self.transformAxisDictionary = dict()
-        print("Building spatial transform for joint: ", joint.attrib["name"])
-
         for transformAxis in joint.findall("./SpatialTransform/TransformAxis"):
             type = transformAxis.attrib["name"]
             axis = Gf.Vec3d([float(x) for x in transformAxis.find("./axis").text.split()])
@@ -182,23 +180,23 @@ def getMeshArrays(meshPath):
 
     return (faceVertexCounts, faceVertexIndices, points)
 
-def writeUSDAnimations(stage, skeleton, modelPath, animationFolder, animations):
+def writeUSDAnimations(skeleton, modelPath, animations, optionsDict):
     print("Writing USD Animations...")
     # Build a snapshot to query
     skeletonCache = UsdSkel.Cache()
     skeletonQuery = skeletonCache.GetSkelQuery(skeleton)
-    skeletonPath = skeleton.GetPrim().GetPath()
 
     for animation in animations:
         (motionName, motionPoses) = animation
         print("\tAnimation: ", motionName)
 
-        animFileBaseName = animationFolder + "/" + motionName
-        animStage = Usd.Stage.CreateNew(animFileBaseName + ".usd")
+        animationName = optionsDict["outputFolder"] + "/" + motionName + "." + optionsDict["format"]
+        animStage = Usd.Stage.CreateNew(animationName)
         UsdGeom.SetStageUpAxis(animStage, UsdGeom.Tokens.y)
 
         motionPrim = animStage.DefinePrim("/motion")
-        # motionPrim.GetReferences().AddReference(modelPath)
+
+        motionPrim.GetReferences().AddReference(modelPath)
 
         animStage.SetDefaultPrim(motionPrim)
         binding = UsdSkel.BindingAPI.Apply(motionPrim)
@@ -242,12 +240,12 @@ def writeUSDAnimations(stage, skeleton, modelPath, animationFolder, animations):
 
         # Save out animation file.
         animStage.GetRootLayer().Save()
-        animStage.Export(animFileBaseName + ".usda")  # Save a usda file as well
-        print("Saved to: ", animFileBaseName + ".usd")
+        print("Saved to: ", animationName)
 
 
-def writeUsd(parseTree, usdPath, geomPath, osimPath, animationFolder, motionFiles, optionsDict):
+def writeUsd(parseTree, geomPath, osimPath, motionFiles, optionsDict):
     root = parseTree.getroot()
+    usdPath = os.path.splitext(os.path.basename(osimPath))[0] + "." + optionsDict["format"]
     stage = Usd.Stage.CreateNew(usdPath)
     UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.y)
     stage.SetMetadata('comment', 'Generated with osim2usd.py by digitalmonkey')
@@ -268,20 +266,16 @@ def writeUsd(parseTree, usdPath, geomPath, osimPath, animationFolder, motionFile
         meshBodyDict = dict()
         wrapBodyDict = dict()
         for bodyset in model.findall("./BodySet"):
-            print("Bodyset: ", bodyset.attrib["name"])
             bodysetPath = skelRootPath + "/" + bodyset.attrib["name"]
             bodysetXform = UsdGeom.Xform.Define(stage, bodysetPath)
 
             bodyIndex = 0
             bodyName2Index = dict()
             for body in bodyset.findall("./objects/Body"):
-                print("\tBody: ", body.attrib["name"])
                 bodyName2Index[body.attrib["name"]] = bodyIndex
 
                 # Process mesh geometry.
                 for mesh in body.findall("./attached_geometry/Mesh"):
-                    # print("\t\tMesh: ", mesh.attrib["name"])
-
                     meshPath = skelRootPath + "/" + bodyset.attrib["name"] + "/" + mesh.attrib["name"]
                     meshGeom = UsdGeom.Mesh.Define(stage, meshPath)
                     meshPrim = stage.GetPrimAtPath(meshPath)
@@ -544,34 +538,30 @@ def writeUsd(parseTree, usdPath, geomPath, osimPath, animationFolder, motionFile
                     localMarkerTransform = Gf.Matrix4d().SetIdentity().SetTranslate(localCoords)
                     geomBindAttr.Set(markerScaleTransform * markerTransform * localMarkerTransform)
 
-
+        # Saving layers in specified format.
         stage.GetRootLayer().Save()
-        stage.Export(usdPath + "a") # Save a usda file as well
 
         # Save out animations into separate usd files.
         animations = []
-        motOptionsDict = dict()
-        # motOptionsDict["relativeTo"] = "pelvis"
-        motOptionsDict["localRotations"] = True
         for motion in motionFiles:
-            (motionName, motionPoses) = mot2quats(motion, usdPath, jointParents, osimPath, motOptionsDict)
+            (motionName, motionPoses) = mot2quats(motion, usdPath, jointParents, osimPath, optionsDict)
             animations.append((motionName, motionPoses))
 
         if len(animations) > 0:
-            writeUSDAnimations(stage, skeleton, usdPath, animationFolder, animations)
+            writeUSDAnimations(skeleton, usdPath, animations, optionsDict)
         return usdPath
 
-def osim2usd(osimPath, usdPath, animationFolder, animations, optionsDict):
+def osim2usd(osimPath, motionFiles, optionsDict):
 
     print(f"Input OpenSim model path set to: {osimPath}")
 
     geomPath = os.path.dirname(osimPath) + "/Geometry"
     print(f"Input OpensSim geometry path set to: {geomPath}")
-    print(f"Output USD scene path set to: {usdPath}")
 
     tree = xmlTree.parse(osimPath)
-    usdPath = writeUsd(tree, usdPath, geomPath, osimPath, animationFolder, animations, optionsDict)
+    usdPath = writeUsd(tree, geomPath, osimPath, motionFiles, optionsDict)
 
+    print(f"Output file saved to: {usdPath}")
     return usdPath
 
 def main(argv):
@@ -581,8 +571,6 @@ def main(argv):
     sessionPath=""
     modelPath = "./Model/LaiArnoldModified2017_poly_withArms_weldHand_scaled_adjusted.osim"
     inputPath = sessionPath + modelPath
-    motionPath = "./Model"
-    outputPath = os.path.splitext(inputPath)[0] + ".usd"
     optionsDict = dict()
     optionsDict["markerSpheres"] = False
     optionsDict["exportMarkers"]  = False
@@ -590,21 +578,26 @@ def main(argv):
     optionsDict["jointNames"] = True
     optionsDict["wrapObjects"] = False
     optionsDict["muscles"] = False
+    optionsDict["format"] = "usda"
+    optionsDict["outputFolder"] = "."
+    optionsDict["motionFormat"] = "localRotationsOnly"
+
+    motionFiles = []
 
     opts, args = getopt.getopt(argv,"hi:o:",["input=","output="])
     for opt, arg in opts:
         if opt == "-h":
-            print("osim2usd.py -i <inputFile> -o <outputFile> [-m <markerStyle>]")
+            print("osim2usd.py -i <inputFile> -o <outputFolder> -a <motionFile> [-m <markerStyle> -s <markerSize> -t <usd|usdc|usda>]")
             sys.exit()
-        elif opt in ("-i", "--input"):
+        elif opt in ("-i", "--input", "--model"):
             inputPath = arg
         elif opt in ("-j", "--jointNames"):
             if arg == "1":
                 optionsDict["jointNames"] = True
             else:
                 optionsDict["jointNames"] = False
-        elif opt in ("-o", "--output"):
-            outputPath = arg
+        elif opt in ("-o", "--outputFolder"):
+            optionsDict["outputFolder"] = arg
         elif opt in ("-m", "--markers"):
             if arg == "spheres":
                 optionsDict["markerSpheres"] = True
@@ -612,13 +605,54 @@ def main(argv):
                 optionsDict["exportMarkers"] = False
         elif opt in ("-s", "--markerSize"):
             options["markerSize"] = float(arg)
+        elif opt in ("-a", "--motion", "--animation"):
+            motionFiles = [ arg ]
+        elif opt in ("--motionFolder", "-f"):
+            motionFiles = os.listdir( arg )
+        elif opt in ("-t", "--type"):
+            optionsDict["format"] = arg
 
-    motionFiles = []
     motionFiles = [
         "./Motions/kinematics_activations_left_leg_squat_0.mot"
     ]
 
-    usdPath = osim2usd(inputPath, outputPath, motionPath, motionFiles, optionsDict)
+    optionsDict["columnsInDegrees"] = [
+        "pelvis_tilt",
+        "pelvis_list",
+        "pelvis_rotation",
+        "hip_flexion_l",
+        "hip_adduction_l",
+        "hip_rotation_l",
+        "hip_flexion_r",
+        "hip_adduction_r",
+        "hip_rotation_r",
+        "knee_angle_l",
+        "knee_angle_r",
+        "ankle_angle_l",
+        "ankle_angle_r",
+        "subtalar_angle_l",
+        "subtalar_angle_r",
+        "mtp_angle_l",
+        "mtp_angle_r",
+        "lumbar_extension",
+        "lumbar_bending",
+        "lumbar_rotation",
+        "arm_flex_l",
+        "arm_add_l",
+        "arm_rot_l",
+        "arm_flex_r",
+        "arm_add_r",
+        "arm_rot_r",
+        "elbow_flex_l",
+        "elbow_flex_r",
+        "pro_sup_l",
+        "pro_sup_r"
+    ]
+
+    if len(motionFiles) > 0:
+        print("Motions to process: ", motionFiles)
+
+    usdPath = osim2usd(inputPath, motionFiles, optionsDict)
     print(f"Saved usdPath to: {usdPath}")
 
 # Checks if running this file from a script vs. a module. Useful if planning to use this file also as a module
