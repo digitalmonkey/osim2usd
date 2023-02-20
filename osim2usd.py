@@ -243,7 +243,7 @@ def writeUSDAnimations(skeleton, modelPath, animations, optionsDict):
         print("Saved to: ", animationName)
 
 
-def writeUsd(parseTree, geomPath, osimPath, motionFiles, optionsDict):
+def writeUsd(parseTree, geomPath, osimPath, motionFiles, muscleNames, optionsDict):
     root = parseTree.getroot()
     usdPath = os.path.splitext(os.path.basename(osimPath))[0] + "." + optionsDict["format"]
     stage = Usd.Stage.CreateNew(usdPath)
@@ -544,22 +544,22 @@ def writeUsd(parseTree, geomPath, osimPath, motionFiles, optionsDict):
         # Save out animations into separate usd files.
         animations = []
         for motion in motionFiles:
-            (motionName, motionPoses) = mot2quats(motion, usdPath, jointParents, osimPath, optionsDict)
-            animations.append((motionName, motionPoses))
-
+            if os.path.exists(motion):
+                (motionName, motionPoses) = mot2quats(motion, usdPath, jointParents, osimPath, muscleNames, optionsDict)
+                animations.append((motionName, motionPoses))
+            else:
+                print(f"Motion file {motion} does not exist. Skipping.")
         if len(animations) > 0:
             writeUSDAnimations(skeleton, usdPath, animations, optionsDict)
         return usdPath
 
-def osim2usd(osimPath, motionFiles, optionsDict):
+def osim2usd(osimPath, geomPath, motionFiles, muscleNames, optionsDict):
 
     print(f"Input OpenSim model path set to: {osimPath}")
-
-    geomPath = os.path.dirname(osimPath) + "/Geometry"
     print(f"Input OpensSim geometry path set to: {geomPath}")
 
     tree = xmlTree.parse(osimPath)
-    usdPath = writeUsd(tree, geomPath, osimPath, motionFiles, optionsDict)
+    usdPath = writeUsd(tree, geomPath, osimPath, motionFiles, muscleNames, optionsDict)
 
     # We rename file here to move to output folder, while making sure the root layer
     # does not reference the output folder than if we passed the full path when we create the stage.
@@ -572,8 +572,6 @@ def main(argv):
     print(f"OpenSim version: {osim.GetVersionAndDate()}")
 
     sessionPath=""
-    modelPath = "./Model/LaiArnoldModified2017_poly_withArms_weldHand_scaled_adjusted.osim"
-    inputPath = sessionPath + modelPath
     optionsDict = dict()
     optionsDict["markerSpheres"] = False
     optionsDict["exportMarkers"]  = False
@@ -586,6 +584,7 @@ def main(argv):
     optionsDict["motionFormat"] = "localRotationsOnly"
 
     motionFiles = []
+    modelPath = ""
 
     opts, args = getopt.getopt(argv,"hi:o:",["input=","output="])
     for opt, arg in opts:
@@ -615,9 +614,63 @@ def main(argv):
         elif opt in ("-t", "--type"):
             optionsDict["format"] = arg
 
+    #modelPath = "./Model/LaiArnoldModified2017_poly_withArms_weldHand_scaled_adjusted.osim"
+    """
     motionFiles = [
-        "./Motions/kinematics_activations_left_leg_squat_0.mot"
+         './Motions/kinematics_activations_Jump2_0_pt2.mot',
+         './Motions/kinematics_activations_Jump2_0_pt1.mot',
+         './Motions/kinematics_activations_balance_left_0.mot',
+         './Motions/kinematics_activations_left_leg_squat_0.mot',
+         './Motions/kinematics_activations_Jump2_0.mot',
+         './Motions/kinematics_activations_jog_in_place_0.mot',
+         './Motions/kinematics_activations_SingleLegHopLeft_0_pt1.mot',
+         './Motions/kinematics_activations_SingleLegHopLeft_0_pt2.mot',
+         './Motions/kinematics_activations_Lung_0_pt1.mot',
+         './Motions/kinematics_activations_Lung_0.mot'
     ]
+    """
+
+    subjectName = "subject11"
+    # Commented out DJ (Dynamic Jump) and STS motions since no activations provided.
+    motFiles = [
+        #"DJ1.mot",
+        #"DJ2.mot",
+        #"DJ3.mot",
+        #"DJ4.mot",
+        #"DJAsym1.mot",
+        #"DJAsym2.mot",
+        #"DJASym4.mot",
+        #"DJAsym5.mot",
+        "squats1.mot",
+        "squatsAsym1.mot",
+        #"STS1.mot",
+        #"STSweakLegs1.mot",
+        "walking1.mot",
+        "walking2.mot",
+        "walking3.mot",
+        "walking4.mot",
+        "walkingTS1.mot",
+        "walkingTS2.mot",
+        "walkingTS3.mot",
+        "walkingTS4.mot"
+    ]
+    optionsDict["activationSTO"] = True # Activations are stored separately in an STO
+
+    #osimPath = "LaiArnoldModified2017_poly_withArms_weldHand_generic.osim"
+    osimPath = "LaiArnoldModified2017_poly_withArms_weldHand_scaled.osim"
+    modelPath = "./Motions/" + subjectName + "/" + osimPath
+    if len(motFiles) and subjectName != "":
+        for motFile in motFiles:
+            motionFile = "./Motions/" + subjectName + "/" + motFile
+            motionFiles.append(motionFile)
+    else:
+        print("Missing subjectName or motFiles.")
+        exit(-1)
+    optionsDict["outputFolder"] = "./Outputs/" + subjectName
+    if os.path.exists(optionsDict["outputFolder"]) == False:
+        os.makedirs(optionsDict["outputFolder"])
+
+
 
     optionsDict["columnsInDegrees"] = [
         "pelvis_tilt",
@@ -652,10 +705,96 @@ def main(argv):
         "pro_sup_r"
     ]
 
+    muscleNames = {
+       "addbrev_r",
+       "addlong_r",
+       "addmagDist_r",
+       "addmagIsch_r",
+       "addmagMid_r",
+       "addmagProx_r",
+       "bflh_r",
+       "bfsh_r",
+       "edl_r",
+       "ehl_r",
+       "fdl_r",
+       "fhl_r",
+       "gaslat_r",
+       "gasmed_r",
+       "glmax1_r",
+       "glmax2_r",
+       "glmax3_r",
+       "glmed1_r",
+       "glmed2_r",
+       "glmed3_r",
+       "glmin1_r",
+       "glmin2_r",
+       "glmin3_r",
+       "grac_r",
+       "iliacus_r",
+       "perbrev_r",
+       "perlong_r",
+       "piri_r",
+       "psoas_r",
+       "recfem_r",
+       "sart_r",
+       "semimem_r",
+       "semiten_r",
+       "soleus_r",
+       "tfl_r",
+       "tibant_r",
+       "tibpost_r",
+       "vasint_r",
+       "vaslat_r",
+       "vasmed_r",
+
+       "addbrev_l",
+       "addlong_l",
+       "addmagDist_l",
+       "addmagIsch_l",
+       "addmagMid_l",
+       "addmagProx_l",
+       "bflh_l",
+       "bfsh_l",
+       "edl_l",
+       "ehl_l",
+       "fdl_l",
+       "fhl_l",
+       "gaslat_l",
+       "gasmed_l",
+       "glmax1_l",
+       "glmax2_l",
+       "glmax3_l",
+       "glmed1_l",
+       "glmed2_l",
+       "glmed3_l",
+       "glmin1_l",
+       "glmin2_l",
+       "glmin3_l",
+       "grac_l",
+       "iliacus_l",
+       "perbrev_l",
+       "perlong_l",
+       "piri_l",
+       "psoas_l",
+       "recfem_l",
+       "sart_l",
+       "semimem_l",
+       "semiten_l",
+       "soleus_l",
+       "tfl_l",
+       "tibant_l",
+       "tibpost_l",
+       "vasint_l",
+       "vaslat_l",
+       "vasmed_l"
+    }
+
     if len(motionFiles) > 0:
         print("Motions to process: ", motionFiles)
 
-    usdPath = osim2usd(inputPath, motionFiles, optionsDict)
+    inputPath = sessionPath + modelPath
+    geomPath = "./Model/Geometry"
+    usdPath = osim2usd(inputPath, geomPath, motionFiles, muscleNames, optionsDict)
     print(f"Saved usdPath to: {usdPath}")
 
 # Checks if running this file from a script vs. a module. Useful if planning to use this file also as a module

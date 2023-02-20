@@ -90,26 +90,38 @@ def saveMotionCSV(outputPath, bodyNames, times, poseTrajectories, rotationsOnly)
         writer.writerow(row)
 
     file.close()
-def mot2quats(motionPath, outputPath, jointParents, modelPath, optionsDict):
+def mot2quats(motionPath, outputPath, jointParents, modelPath, muscleNames, optionsDict):
 
     print(f"Input OpenSim motion path set to: {motionPath}")
-
+    print(f"Input OpenSim model path set to: {modelPath}")
     model = osim.Model(modelPath)
     model.initSystem()
 
     motion = osim.Storage(motionPath)
 
-    if optionsDict["columnsInDegrees"]:
-        print("Convert given degree data columns to radians.")
-        for dof in optionsDict["columnsInDegrees"]:
-            print(f"Convert data {dof} to radians.")
-            dofIndex = motion.getStateIndex(dof)
-            motion.multiplyColumn(dofIndex, math.pi/180.0) # Convert to radians.
-        # Edit storage so angles are in radians.
-        motion.setInDegrees(False)
+    activationStorage = None
+    if optionsDict["activationSTO"] == True:
+        stoPath = os.path.splitext(motionPath)[0] + "_StaticOptimization_activation.sto"
+        activationStorage = osim.Storage(stoPath)
+    else:
+        print("Activations are in .mot file.")
 
-    if motion.isInDegrees == True:
-        print(f"{Fore.LIGHTYELLOW_EX}Warning: Motion set is in degrees. Radians are required.{Style.RESET_ALL}")
+
+
+    if motion.isInDegrees() == True:
+        if optionsDict["columnsInDegrees"]:
+            print("Convert given degree data columns to radians.")
+            for dof in optionsDict["columnsInDegrees"]:
+                print(f"Convert data {dof} to radians.")
+                dofIndex = motion.getStateIndex(dof)
+                motion.multiplyColumn(dofIndex, math.pi/180.0) # Convert to radians.
+            # Edit storage so angles are in radians.
+            motion.setInDegrees(False)
+        else:
+            print(f"{Fore.LIGHTYELLOW_EX}Warning: Motion set is in degrees. Provide columnsInDegrees list to convert. Radians are required.{Style.RESET_ALL}")
+            exit(-1)
+    else:
+        print("Data set is in radians already. No need to convert.")
 
     motionName = os.path.splitext(os.path.basename(motionPath))[0]
     print (f"Motion name: {motionName}")
@@ -152,9 +164,11 @@ def mot2quats(motionPath, outputPath, jointParents, modelPath, optionsDict):
         for (name, body, joint) in workingBodyList:
             positionGround = body.getPositionInGround(motionState)
             rotationGround = body.getRotationInGround(motionState)
+
             # Convert the OpenSim quaternion to the numpy quaternion which has more useful attributes.
             localPosition = positionGround
             bodyQuat = rotationGround.convertRotationToQuaternion()
+            #print("Body: ", name, "Pos: ", positionGround, "Rot: ", bodyQuat)
             localRotation = np.quaternion(bodyQuat.get(0), bodyQuat.get(1), bodyQuat.get(2), bodyQuat.get(3))
 
             if "motionFormat" in optionsDict:
@@ -185,7 +199,7 @@ def mot2quats(motionPath, outputPath, jointParents, modelPath, optionsDict):
         poseTrajectories.append(bodyPoses)
 
     if outputPath != None:
-        saveMotionCSV(optionsDict["outputFolder"] + "/" + os.path.splitext(outputPath)[0] + "_motion.csv", bodyNames, times, poseTrajectories, True)
+        saveMotionCSV(optionsDict["outputFolder"] + "/" + motionName + "_motion.csv", bodyNames, times, poseTrajectories, True)
 
         outputNames = []
         for force in model.getForceSet():
@@ -197,12 +211,16 @@ def mot2quats(motionPath, outputPath, jointParents, modelPath, optionsDict):
         names = model.getStateVariableNames()
         activationLabels = []
         for j in range(names.getSize()):
-            if "/activation" in names.get(j):
-                activationLabels.append(names.get(j))
+            muscleName = names.get(j)
+            if "/activation" in muscleName:
+                activationLabels.append(muscleName)
+            elif muscleName in muscleNames:
+                activationLabels.append(muscleName)
 
         print(f"Found {len(activationLabels)} activation state variables for output.")
 
         outputNames = []
+        labelDict = dict()
         for i in range(len(times)):
             sample = []
             state = motionTrajectory.get(i)
@@ -210,14 +228,27 @@ def mot2quats(motionPath, outputPath, jointParents, modelPath, optionsDict):
 
             for label in activationLabels:
                 if i == 0:
-                   muscleLabel = label.replace("/activation","")
-                   muscleLabel = muscleLabel.replace("/forceset/","")
-                   outputNames.append(muscleLabel)
-                activation = model.getStateVariableValue(state, label)
+                    muscleLabel = label
+                    if "/activation" in label:
+                       muscleLabel = label.replace("/activation","")
+                    muscleLabel = muscleLabel.replace("/forceset/","")
+                    labelDict[label] = muscleLabel
+                    outputNames.append(muscleLabel)
+
+                activation = 0.0
+                if activationStorage:
+                    activationStates = activationStorage.getStateVector(i)
+                    activationVector = activationStates.getData()
+
+                    keyLabel = labelDict[label]
+                    stateIndex = activationStorage.getStateIndex(keyLabel)
+                    activation = activationVector.get(stateIndex)
+                else:
+                    activation = model.getStateVariableValue(state, label)
                 sample.append(str(activation))
             outputData.append(sample)
 
-        saveOutputCSV(optionsDict["outputFolder"] + "/" + os.path.splitext(outputPath)[0] + "_output.csv", times, outputNames, outputData)
+        saveOutputCSV(optionsDict["outputFolder"] + "/" + motionName + "_output.csv", times, outputNames, outputData)
 
 
 
@@ -233,6 +264,7 @@ def main(argv):
     motionPath = "./Motions/kinematics_activations_left_leg_squat_0.mot"
     inputPath = sessionPath + motionPath
     outputPath = os.path.splitext(inputPath)[0]
+    muscleNames = {} # Empty set
     optionsDict = dict()
 
     optionsDict["localRotations"] = True
@@ -249,7 +281,7 @@ def main(argv):
         elif opt in ("-m", "--model"):
             modelPath = arg
 
-    (name, bodyPoseTrajectories) = mot2quats(inputPath, outputPath, None, modelPath, optionsDict)
+    (name, bodyPoseTrajectories) = mot2quats(inputPath, outputPath, None, modelPath, muscleNames, optionsDict)
 
 # Checks if running this file from a script vs. a module. Useful if planning to use this file also as a module
 # to incorporate into other scripts.
